@@ -536,14 +536,52 @@ def run_sse_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     uvicorn.run(starlette_app, host=host, port=port)
 
 
+def run_streamable_server(host: str = "0.0.0.0", port: int = 8000, mount_path: str = "/mcp") -> None:
+    """Run the MCP server over streamable HTTP transport (preferred for Agents SDK)."""
+    try:
+        import anyio
+        import uvicorn
+        from contextlib import asynccontextmanager
+        from mcp.server.streamable_http import StreamableHTTPServerTransport
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+    except ImportError as exc:
+        raise SystemExit(
+            "Streamable transport requires extra packages.\n"
+            "Install: pip install uvicorn starlette anyio\n"
+            f"Original error: {exc}"
+        ) from exc
+
+    transport = StreamableHTTPServerTransport(mcp_session_id=None)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async with transport.connect() as (read_stream, write_stream):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(server.run, read_stream, write_stream, server.create_initialization_options())
+                yield
+                tg.cancel_scope.cancel()
+
+    starlette_app = Starlette(routes=[Mount(mount_path, app=transport.handle_request)], lifespan=lifespan)
+
+    print(f"findata MCP streamable server running on http://{host}:{port}{mount_path}")
+    uvicorn.run(starlette_app, host=host, port=port)
+
+
 def _main_sse_cli() -> None:
-    """Console-script entry point for ``findata-mcp-sse``."""
+    """CLI entry point for network transports."""
     import argparse
-    parser = argparse.ArgumentParser(description="Run findata MCP server over SSE/HTTP")
+    parser = argparse.ArgumentParser(description="Run findata MCP server over HTTP transport")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    parser.add_argument("--transport", choices=["streamable", "sse"], default="streamable")
+    parser.add_argument("--mount-path", default="/mcp", help="Path for streamable endpoint")
     args = parser.parse_args()
-    run_sse_server(host=args.host, port=args.port)
+
+    if args.transport == "sse":
+        run_sse_server(host=args.host, port=args.port)
+    else:
+        run_streamable_server(host=args.host, port=args.port, mount_path=args.mount_path)
 
 
 if __name__ == "__main__":
