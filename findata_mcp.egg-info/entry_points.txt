@@ -1,0 +1,3 @@
+[console_scripts]
+findata-mcp = findata_mcp.server:_main_sync
+findata-mcp-sse = findata_mcp.server:_main_sse_cli

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "findata-mcp"
+version = "0.1.0"
+description = "Unified financial data library with an MCP server for code-writing agents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Core runtime deps — always needed
+    "mcp>=1.0.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+# Data-source extras — install what you actually use
+yfinance  = ["yfinance>=0.2.38"]
+parquet   = ["pyarrow>=14.0"]
+bloomberg = ["blpapi"]
+# SSE/HTTP transport — needed to run as a web server
+sse       = ["uvicorn>=0.27.0", "starlette>=0.36.0"]
+# Development & testing
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+# Install everything (except bloomberg which needs the Bloomberg SDK)
+all = ["yfinance>=0.2.38", "pyarrow>=14.0", "uvicorn>=0.27.0", "starlette>=0.36.0"]
+
+[project.scripts]
+# stdio transport — for Claude Desktop / CLI agents
+findata-mcp     = "findata_mcp.server:_main_sync"
+# SSE/HTTP transport — for web-based agents and OpenAI Agents SDK
+findata-mcp-sse = "findata_mcp.server:_main_sse_cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["findata*", "findata_mcp*"]

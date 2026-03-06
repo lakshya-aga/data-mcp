@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+findata/bloomberg.py
+findata/equity_prices.py
+findata/file_reader.py
+findata/sp500_composition.py
+findata_mcp/server.py
+findata_mcp.egg-info/PKG-INFO
+findata_mcp.egg-info/SOURCES.txt
+findata_mcp.egg-info/dependency_links.txt
+findata_mcp.egg-info/entry_points.txt
+findata_mcp.egg-info/requires.txt
+findata_mcp.egg-info/top_level.txt
+tests/test_findata.py
