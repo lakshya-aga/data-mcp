@@ -41,7 +41,13 @@ Or, if running from source:
 from __future__ import annotations
 
 import inspect
+import json
+import os
+import subprocess
 import textwrap
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List
 
 try:
@@ -241,6 +247,64 @@ _REGISTRY: List[Dict[str, Any]] = [
 # Build name-keyed index BEFORE call_tool references it
 _REGISTRY_BY_NAME: Dict[str, Dict[str, Any]] = {e["name"]: e for e in _REGISTRY}
 
+_REQUESTS_DIR = Path(os.environ.get("FINDATA_TOOL_REQUESTS_DIR", ".tool_builder/requests"))
+_DEFAULT_BUILDER_PROMPT = (
+    "Implement the requested findata wrapper tool in this repository. "
+    "Use the request spec file provided. Add/organize the module under findata/, "
+    "update findata_mcp/server.py registry/docs/examples so the new tool is discoverable, "
+    "and update README usage/docs accordingly."
+)
+
+
+def _create_tool_request(arguments: Dict[str, Any]) -> dict:
+    """Persist a tool-build request and optionally spawn an external builder agent."""
+    tool_name = arguments.get("tool_name", "").strip()
+    module_path = arguments.get("module_path", "").strip()
+    summary = arguments.get("summary", "").strip()
+    code = arguments.get("code", "")
+
+    if not tool_name or not module_path or not summary or not code:
+        raise ValueError("tool_name, module_path, summary, and code are required")
+
+    request_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    _REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
+    request_file = _REQUESTS_DIR / f"{request_id}.json"
+
+    payload = {
+        "request_id": request_id,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "tool_name": tool_name,
+        "module_path": module_path,
+        "summary": summary,
+        "tags": arguments.get("tags", []),
+        "install_requires": arguments.get("install_requires", []),
+        "example": arguments.get("example", ""),
+        "code": code,
+        "notes": arguments.get("notes", ""),
+    }
+    request_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    builder_cmd = os.environ.get("FINDATA_TOOL_BUILDER_CMD", "").strip()
+    spawned = False
+    spawn_error = None
+
+    if builder_cmd:
+        # Supports placeholders: {request_file}, {request_id}
+        cmd = builder_cmd.format(request_file=str(request_file), request_id=request_id)
+        try:
+            subprocess.Popen(cmd, shell=True, cwd=str(Path(__file__).resolve().parents[1]))
+            spawned = True
+        except Exception as exc:  # pragma: no cover
+            spawn_error = str(exc)
+
+    return {
+        "request_id": request_id,
+        "request_file": str(request_file),
+        "builder_spawned": spawned,
+        "builder_command": builder_cmd or None,
+        "spawn_error": spawn_error,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Doc renderer
@@ -374,6 +438,28 @@ async def list_tools() -> List[types.Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="request_tool_addition",
+            description=(
+                "Request a new findata wrapper by submitting proposed implementation code + metadata. "
+                "The server stores a formal spec and can spawn an external tool-building agent "
+                "(configured by FINDATA_TOOL_BUILDER_CMD) to implement and update docs/registry."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tool_name": {"type": "string", "description": "Public wrapper function name, e.g. get_fx_spot_prices"},
+                    "module_path": {"type": "string", "description": "Module target, e.g. findata/fx.py"},
+                    "summary": {"type": "string", "description": "One-line purpose of the wrapper"},
+                    "code": {"type": "string", "description": "Proposed Python implementation code"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "install_requires": {"type": "array", "items": {"type": "string"}},
+                    "example": {"type": "string", "description": "Usage snippet for docs"},
+                    "notes": {"type": "string", "description": "Additional implementation constraints"},
+                },
+                "required": ["tool_name", "module_path", "summary", "code"],
+            },
+        ),
     ]
 
 
@@ -440,6 +526,37 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
                 f"- **Install:** {', '.join(entry.get('install_requires', []))}\n"
             )
         return [types.TextContent(type="text", text="\n".join(lines))]
+
+    # ------------------------------------------------------------------ #
+    # request_tool_addition
+    # ------------------------------------------------------------------ #
+    elif name == "request_tool_addition":
+        try:
+            request_info = _create_tool_request(arguments)
+        except ValueError as exc:
+            return [types.TextContent(type="text", text=f"Invalid request: {exc}")]
+
+        spawn_status = (
+            "✅ builder agent spawn requested"
+            if request_info["builder_spawned"]
+            else "ℹ️ request queued (no builder command configured)"
+        )
+
+        text = (
+            f"# Tool addition request accepted\n\n"
+            f"- Request ID: `{request_info['request_id']}`\n"
+            f"- Request file: `{request_info['request_file']}`\n"
+            f"- Status: {spawn_status}\n"
+            f"- Builder command: `{request_info['builder_command'] or '(unset)'}`\n"
+            f"\n"
+            f"To auto-build, set env var `FINDATA_TOOL_BUILDER_CMD` with placeholders `{{request_file}}` and `{{request_id}}`.\n"
+            f"Example:\n"
+            f"`FINDATA_TOOL_BUILDER_CMD=\"openclaw sessions_spawn --runtime acp --agentId openai/gpt-5.1-codex --task '" + _DEFAULT_BUILDER_PROMPT + " Request: {request_file}'\"`\n"
+        )
+        if request_info["spawn_error"]:
+            text += f"\nSpawn error: `{request_info['spawn_error']}`\n"
+
+        return [types.TextContent(type="text", text=text)]
 
     return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 

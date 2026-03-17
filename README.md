@@ -115,6 +115,7 @@ The server communicates over **stdio** (standard MCP transport).
 | `search_tools` | Natural-language query → matching function docs + code examples |
 | `get_tool_doc` | Full reference for one function by exact name |
 | `list_all_tools` | All wrapper functions with summaries and tags |
+| `request_tool_addition` | Submit proposed wrapper code + metadata; queue/spawn a tool-building agent and formalize integration |
 
 ### `search_tools`
 ```json
@@ -131,6 +132,22 @@ Returns: our wrapper's signature, parameter docs, and a copy-paste example.
 ```json
 {}
 ```
+
+### `request_tool_addition`
+```json
+{
+  "tool_name": "get_fx_spot_prices",
+  "module_path": "findata/fx.py",
+  "summary": "Fetch spot FX rates for currency pairs with normalized schema.",
+  "code": "def get_fx_spot_prices(...):\n    ...",
+  "tags": ["fx", "spot", "currencies"],
+  "install_requires": ["requests"],
+  "example": "from findata.fx import get_fx_spot_prices"
+}
+```
+
+This tool writes a formal request file under `.tool_builder/requests/` and can auto-spawn
+an external builder process if `FINDATA_TOOL_BUILDER_CMD` is configured.
 
 ---
 
@@ -217,6 +234,21 @@ df = get_bloomberg_data(
 ```
 
 3. Restart the MCP server — the function is immediately discoverable.
+
+### Optional: auto-spawn a builder agent
+
+Set an external command to run whenever `request_tool_addition` is called:
+
+```bash
+export FINDATA_TOOL_BUILDER_CMD='python scripts/your_builder.py --request {request_file}'
+```
+
+Placeholders:
+- `{request_file}` → path to generated JSON request spec
+- `{request_id}` → unique request id
+
+Your builder should implement the wrapper, update `_REGISTRY` in `findata_mcp/server.py`,
+and refresh docs in this README.
 
 ---
 
