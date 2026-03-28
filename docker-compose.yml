@@ -1,0 +1,19 @@
+services:
+  findata-mcp:
+    image: ghcr.io/lakshya-aga/data-mcp:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # Option 2: mount host auth (login once on your machine, no OAuth prompts in container)
+      - ~/.codex:/root/.codex:ro
+      - ~/.claude:/root/.claude:ro
+      # Persist SP500 git clone across restarts
+      - findata-data:/app/data
+    environment:
+      # FRED_API_KEY: ...        # required for get_fred_series
+      # OPENAI_API_KEY: sk-...   # Option 1: API key instead of host auth mount
+      # ANTHROPIC_API_KEY: sk-ant-...
+    restart: unless-stopped
+
+volumes:
+  findata-data:

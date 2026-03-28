@@ -35,38 +35,57 @@ findata_mcp/
 
 ---
 
-## Docker (recommended)
+## Installation
 
-The image is published to GitHub Container Registry on every push to `main`.
+The recommended way to run findata-mcp is via Docker. The image is published to GHCR on every push to `main` and includes Codex CLI and Claude Code baked in.
 
-### Pull and run
+### Prerequisites
 
-Codex CLI and Claude Code are baked into the image. On first start the
-container walks you through OAuth for both — credentials are saved to named
-volumes so you only authenticate once.
+- Docker
+- Codex and/or Claude authenticated on your host machine
+
+### 1. Authenticate on your host (one-time)
 
 ```bash
-docker pull ghcr.io/lakshya-aga/data-mcp:latest
+codex auth login    # opens browser → saves to ~/.codex/auth.json
+claude auth login   # opens browser → saves to ~/.claude/credentials.json
+```
 
-docker run -it -p 8000:8000 \
-  -v findata-codex:/root/.codex \
-  -v findata-claude:/root/.claude \
+### 2. Pull and run
+
+```bash
+docker compose up -d
+```
+
+That's it. `docker-compose.yml` mounts `~/.codex` and `~/.claude` read-only so the container inherits your auth with no interactive prompts.
+
+Or with `docker run` directly:
+
+```bash
+docker run -d -p 8000:8000 \
+  -v ~/.codex:/root/.codex:ro \
+  -v ~/.claude:/root/.claude:ro \
   ghcr.io/lakshya-aga/data-mcp:latest
 ```
 
-- `-it` — required for the interactive OAuth prompts on first run
-- `findata-codex` / `findata-claude` — named volumes that persist credentials; subsequent starts skip auth and go straight to the server
+### Auth options
 
-The server exposes two endpoints:
+| Option | How |
+|--------|-----|
+| **Mount host auth (recommended)** | Login on host, mount `~/.codex` and `~/.claude` read-only |
+| **API keys** | Pass `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` as env vars — skips OAuth entirely |
+| **Interactive OAuth** | Run with `-it` and no auth — container prompts you on first start |
 
-| Endpoint | Purpose |
-|---|---|
-| `GET  /sse` | SSE stream — agents connect here first |
-| `POST /messages` | Agent sends tool calls here |
+```bash
+# API keys (non-interactive)
+docker run -d -p 8000:8000 \
+  -e OPENAI_API_KEY=sk-... \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e FRED_API_KEY=... \
+  ghcr.io/lakshya-aga/data-mcp:latest
+```
 
 ### Environment variables
-
-You can skip the interactive OAuth flow by supplying API keys directly:
 
 | Variable | Description |
 |---|---|
@@ -75,13 +94,23 @@ You can skip the interactive OAuth flow by supplying API keys directly:
 | `FRED_API_KEY` | Required for `get_fred_series`. Free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
 | `CODEX_CLI_PATH` | Override Codex binary path (defaults to `codex` on PATH) |
 
-```bash
-# Non-interactive (API keys provided, no OAuth prompts)
-docker run -p 8000:8000 \
-  -e OPENAI_API_KEY=sk-... \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
-  -e FRED_API_KEY=... \
-  ghcr.io/lakshya-aga/data-mcp:latest
+### Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET  /sse` | SSE stream — agents connect here first |
+| `POST /messages` | Agent sends tool calls here |
+
+### Connect Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "findata": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
 ```
 
 ### Connecting from an agent
@@ -101,21 +130,19 @@ async with sse_client("http://localhost:8000/sse") as (r, w):
         result = await session.call_tool("search_tools", {"query": "equity prices"})
 ```
 
-### `request_data_source` in the container
+### `request_data_source` — writing new wrappers
 
-Codex CLI is already installed in the image. Mount the repo source so Codex
-can write new wrapper files back to disk:
+Codex is baked into the image. To let Codex write new wrapper files back to
+disk, mount the repo source:
 
 ```bash
-docker run -it -p 8000:8000 \
-  -v findata-codex:/root/.codex \
-  -v findata-claude:/root/.claude \
+docker run -d -p 8000:8000 \
+  -v ~/.codex:/root/.codex:ro \
   -v $(pwd):/app \
   ghcr.io/lakshya-aga/data-mcp:latest
 ```
 
-New wrappers written by Codex are hot-reloaded into the live registry
-immediately — no restart needed.
+New wrappers written by Codex are hot-reloaded into the live registry immediately — no restart needed.
 
 ---
 
@@ -144,35 +171,6 @@ findata-mcp
 
 # SSE/HTTP transport (web-based agents, OpenAI Agents SDK)
 findata-mcp-sse --host 0.0.0.0 --port 8000
-```
-
----
-
-## MCP client configuration
-
-### Claude Desktop — local install
-`~/Library/Application Support/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "findata": {
-      "command": "findata-mcp"
-    }
-  }
-}
-```
-
-### Claude Desktop — against the running container
-
-```json
-{
-  "mcpServers": {
-    "findata": {
-      "url": "http://localhost:8000/sse"
-    }
-  }
-}
 ```
 
 ---
