@@ -7,10 +7,9 @@ services:
       # Option 2: mount host auth (login once on your machine, no OAuth prompts in container)
       - ~/.codex:/root/.codex:ro
       - ~/.claude:/root/.claude:ro
-      # Mount local server.py so edits take effect without rebuilding
-      - ./findata_mcp/server.py:/app/findata_mcp/server.py:ro
-      # Writable overlay for Codex-generated files and SP500 git clone
+      # Writable overlays for Codex-generated files (initialized from image on first run)
       - findata-app:/app/findata
+      - findata-mcp-app:/app/findata_mcp
       - findata-data:/app/data
     environment:
       FRED_API_KEY: ""
@@ -20,4 +19,5 @@ services:
 
 volumes:
   findata-app:
+  findata-mcp-app:
   findata-data:
