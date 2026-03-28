@@ -40,9 +40,268 @@ Or, if running from source:
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import inspect
+import os
+import re
+import sys
 import textwrap
+from pathlib import Path
 from typing import Any, Dict, List
+
+# ---------------------------------------------------------------------------
+# Codex CLI integration
+# ---------------------------------------------------------------------------
+
+_CODEX_CLI = os.environ.get(
+    "CODEX_CLI_PATH",
+    "/Applications/Codex.app/Contents/Resources/codex",
+)
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # data-mcp/
+
+
+def _extract_tags_from_text(*texts: str) -> List[str]:
+    """Derive search tags from function name words and a summary string."""
+    seen: set[str] = set()
+    tags: List[str] = []
+    for text in texts:
+        for word in re.findall(r"[a-z]+", text.lower()):
+            if len(word) > 2 and word not in seen:
+                seen.add(word)
+                tags.append(word)
+    return tags
+
+
+def _hot_reload_new_sources() -> List[str]:
+    """
+    Scan findata/ for modules not yet in the registry and register any
+    get_* functions found in them.  Called after a successful Codex run so
+    the new source is immediately discoverable without restarting the server.
+
+    Returns the list of function names that were added.
+    """
+    findata_dir = _REPO_ROOT / "findata"
+    added: List[str] = []
+
+    for py_file in sorted(findata_dir.glob("*.py")):
+        if py_file.name.startswith("_"):
+            continue
+
+        module_name = f"findata.{py_file.stem}"
+
+        # Import fresh modules; skip ones that were already imported at
+        # server start (they're already in the registry).
+        if module_name in sys.modules:
+            mod = sys.modules[module_name]
+        else:
+            try:
+                mod = importlib.import_module(module_name)
+            except Exception:
+                # Broken import — Codex validation step should have caught
+                # this, but be defensive and skip rather than crashing.
+                continue
+
+        for attr_name in dir(mod):
+            if not attr_name.startswith("get_"):
+                continue
+            if attr_name in _REGISTRY_BY_NAME:
+                continue
+            fn = getattr(mod, attr_name)
+            if not callable(fn):
+                continue
+
+            doc = inspect.getdoc(fn) or ""
+            summary = doc.splitlines()[0] if doc else f"Wrapper function {attr_name}."
+
+            entry: Dict[str, Any] = {
+                "name": attr_name,
+                "callable": fn,
+                "module": module_name,
+                "tags": _extract_tags_from_text(attr_name, summary),
+                "stub": False,
+                "install_requires": [],
+                "summary": summary,
+                "example": textwrap.dedent(f"""\
+                    from {module_name} import {attr_name}
+
+                    df = {attr_name}(...)
+                """),
+            }
+            _REGISTRY.append(entry)
+            _REGISTRY_BY_NAME[attr_name] = entry
+            added.append(attr_name)
+
+    return added
+
+
+def _build_codex_prompt(request: str) -> str:
+    """Return the full prompt sent to the Codex agent for a data-source request."""
+    return textwrap.dedent(f"""\
+        You are adding a new financial data wrapper to the findata library.
+
+        ## Repository root
+        {_REPO_ROOT}
+
+        ## User request
+        "{request}"
+
+        ## Your tasks
+
+        ### 1 — Create findata/<module_name>.py
+        Pick a sensible snake_case module name and implement one public wrapper
+        function (e.g. `get_fama_french_factors`).  Follow this exact style:
+
+        ```python
+        \"\"\"
+        findata.<module_name>
+        ---------------------
+        One-line description of the data source.
+        \"\"\"
+        from __future__ import annotations
+        from typing import List, Optional
+        import pandas as pd
+
+        def get_<something>(
+            param1: ...,
+            param2: ...,
+        ) -> pd.DataFrame:
+            \"\"\"
+            One-line summary.
+
+            Parameters
+            ----------
+            param1 : type
+                Description.
+
+            Returns
+            -------
+            pd.DataFrame
+                DatetimeIndex rows, columns described here.
+
+            Raises
+            ------
+            ImportError
+                If a required package is not installed.
+
+            Examples
+            --------
+            >>> from findata.<module_name> import get_<something>
+            >>> df = get_<something>(...)
+            \"\"\"
+            try:
+                import some_package
+            except ImportError as exc:
+                raise ImportError(
+                    "some_package is required. Install: pip install some_package"
+                ) from exc
+            # ... implementation ...
+            return df
+        ```
+
+        Rules:
+        - Heavy dependencies (pandas, requests, etc.) are lazy-imported INSIDE the
+          function body with a helpful ImportError message.
+        - Always return a pd.DataFrame with a DatetimeIndex.
+        - Validate inputs; raise ValueError with clear messages.
+        - The implementation can use any approach: a Python library (e.g.
+          pandas-datareader, yfinance), a public REST API, or HTML scraping — pick
+          whichever is most reliable and requires the fewest exotic dependencies.
+
+        ### 2 — Register in findata_mcp/server.py
+        Add the import near the other findata imports:
+            from findata.<module_name> import get_<something>
+
+        Then add one dict to the `_REGISTRY` list:
+        {{
+            "name": "get_<something>",
+            "callable": get_<something>,
+            "module": "findata.<module_name>",
+            "tags": [...relevant keywords an agent might search for...],
+            "stub": False,
+            "install_requires": [...pip packages...],
+            "summary": "One sentence.",
+            "example": textwrap.dedent(\"\"\"\\\\
+                from findata.<module_name> import get_<something>
+
+                df = get_<something>(...)
+                # Explain what df looks like
+            \"\"\"),
+        }}
+
+        ### 3 — Validate before finishing
+        After writing both files, run this shell command from the repo root:
+
+            cd {_REPO_ROOT} && python -c "
+        import inspect
+        from findata.<module_name> import <function_name>
+        sig = inspect.signature(<function_name>)
+        print('VALIDATION OK:', '<function_name>', sig)
+        "
+
+        Rules for validation:
+        - If the command fails for any reason (ImportError, SyntaxError,
+          missing dependency, etc.) fix the code and re-run until it passes.
+        - If a required package is missing, install it first with pip, then
+          re-run the check.
+        - Do NOT call the function to fetch live data — only verify it
+          imports cleanly and has the expected signature.
+        - Only report success after this check exits with code 0.
+
+        Only modify findata/<module_name>.py (new file) and
+        findata_mcp/server.py (add import + registry entry).
+        Do not touch any other files.
+    """)
+
+
+async def _run_codex_agent(request: str, timeout: int = 300) -> str:
+    """Spawn `codex exec` to implement the requested data source."""
+    prompt = _build_codex_prompt(request)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _CODEX_CLI, "exec",
+            "--full-auto",
+            "-C", str(_REPO_ROOT),
+            prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return (
+            f"Codex CLI not found at {_CODEX_CLI!r}. "
+            "Ensure Codex is installed at /Applications/Codex.app."
+        )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return f"Codex agent timed out after {timeout}s."
+
+    out = stdout.decode(errors="replace").strip()
+    err = stderr.decode(errors="replace").strip()
+
+    if proc.returncode != 0:
+        detail = err or out or "(no output)"
+        return (
+            f"Codex exited with code {proc.returncode}.\n\n"
+            f"Details:\n{detail}"
+        )
+
+    # Hot-reload: register any new findata modules into the live registry
+    # so the new source is immediately searchable without a server restart.
+    newly_registered = _hot_reload_new_sources()
+    reload_note = (
+        f"\n\nHot-reloaded into registry: {newly_registered}"
+        if newly_registered
+        else "\n\n(No new registry entries detected — server restart may be needed.)"
+    )
+
+    return (
+        f"Codex agent completed (exit 0).\n\n"
+        + (out if out else "(no stdout)")
+        + reload_note
+    )
 
 try:
     from mcp.server import Server
@@ -61,6 +320,11 @@ from findata.equity_prices import get_equity_prices
 from findata.sp500_composition import get_sp500_composition, refresh_sp500_cache
 from findata.file_reader import get_file_data
 from findata.bloomberg import get_bloomberg_data
+from findata.fama_french import get_fama_french_factors
+from findata.ken_french_factors import get_ken_french_factors
+from findata.fred import get_fred_series
+from findata.cboe_volatility import get_cboe_volatility_indices
+from findata.coingecko import get_coingecko_ohlcv
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -112,6 +376,53 @@ _REGISTRY: List[Dict[str, Any]] = [
                 fields=["Close"],
                 frequency="1wk",
             )
+        """),
+    },
+    {
+        "name": "get_cboe_volatility_indices",
+        "callable": get_cboe_volatility_indices,
+        "module": "findata.cboe_volatility",
+        "tags": [
+            "vix", "cboe", "volatility", "index", "indices", "implied",
+            "variance", "vvix", "vxn", "vxd", "vix9d", "market", "fear",
+            "yfinance", "historical", "ohlcv", "daily",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance", "pandas"],
+        "summary": (
+            "Fetch historical CBOE volatility index data (e.g. VIX, VVIX) "
+            "via Yahoo Finance tickers."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.cboe_volatility import get_cboe_volatility_indices
+
+            # VIX and VVIX daily history
+            df = get_cboe_volatility_indices(
+                symbols=["^VIX", "^VVIX"],
+                start_date="2020-01-01",
+                end_date="2024-12-31",
+            )
+            # df: DatetimeIndex rows, MultiIndex columns (field, symbol)
+        """),
+    },
+    {
+        "name": "get_coingecko_ohlcv",
+        "callable": get_coingecko_ohlcv,
+        "module": "findata.coingecko",
+        "tags": [
+            "crypto", "cryptocurrency", "coingecko", "bitcoin", "ethereum",
+            "ohlcv", "candles", "bars", "prices", "volume", "market data",
+            "historical", "spot", "usd", "public api",
+        ],
+        "stub": False,
+        "install_requires": ["pandas", "requests"],
+        "summary": "Fetch crypto OHLCV candles from the CoinGecko public API.",
+        "example": textwrap.dedent("""\
+            from findata.coingecko import get_coingecko_ohlcv
+
+            # 90 days of BTC/USD OHLCV
+            df = get_coingecko_ohlcv("bitcoin", vs_currency="usd", days=90)
+            # df: DatetimeIndex rows, columns open/high/low/close/volume
         """),
     },
     {
@@ -234,6 +545,85 @@ _REGISTRY: List[Dict[str, Any]] = [
                 overrides={"BEST_FPERIOD_OVERRIDE": "1BF"},
             )
             # NOTE: raises NotImplementedError until session logic is added.
+        """),
+    },
+    {
+        "name": "get_fama_french_factors",
+        "callable": get_fama_french_factors,
+        "module": "findata.fama_french",
+        "tags": [
+            "fama-french", "fama french", "ff3", "ff5", "factors",
+            "three factor", "five factor", "ken french", "research data",
+            "daily", "returns", "risk premia", "mkt-rf", "smb", "hml",
+            "rmw", "cma", "rf",
+        ],
+        "stub": False,
+        "install_requires": ["pandas-datareader"],
+        "summary": (
+            "Fetch daily Fama-French 3- or 5-factor returns from the "
+            "Kenneth R. French Data Library."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.fama_french import get_fama_french_factors
+
+            # 5-factor daily returns as decimals
+            df = get_fama_french_factors(
+                factor_model="5",
+                start_date="2010-01-01",
+                end_date="2020-12-31",
+            )
+            # df: DatetimeIndex rows with columns Mkt-RF, SMB, HML, RMW, CMA, RF
+        """),
+    },
+    {
+        "name": "get_ken_french_factors",
+        "callable": get_ken_french_factors,
+        "module": "findata.ken_french_factors",
+        "tags": [
+            "ken french", "kenneth french", "fama-french", "fama french",
+            "ff3", "ff5", "factors", "three factor", "five factor",
+            "daily", "returns", "risk premia", "mkt-rf", "smb", "hml",
+            "rmw", "cma", "rf",
+        ],
+        "stub": False,
+        "install_requires": ["pandas-datareader"],
+        "summary": (
+            "Fetch daily Fama-French 3- or 5-factor returns from the "
+            "Kenneth R. French Data Library."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.ken_french_factors import get_ken_french_factors
+
+            # 3-factor daily returns as decimals
+            df = get_ken_french_factors(
+                factor_model="3",
+                start_date="2015-01-01",
+                end_date="2020-12-31",
+            )
+            # df: DatetimeIndex rows with columns Mkt-RF, SMB, HML, RF
+        """),
+    },
+    {
+        "name": "get_fred_series",
+        "callable": get_fred_series,
+        "module": "findata.fred",
+        "tags": [
+            "fred", "federal reserve", "st louis fed", "macroeconomic",
+            "macro", "economic", "time series", "cpi", "inflation",
+            "unemployment", "rates", "interest rates", "gdp",
+        ],
+        "stub": False,
+        "install_requires": ["fredapi"],
+        "summary": "Fetch one or more FRED macroeconomic time series.",
+        "example": textwrap.dedent("""\
+            from findata.fred import get_fred_series
+
+            df = get_fred_series(
+                ["CPIAUCSL", "UNRATE"],
+                start_date="2015-01-01",
+                end_date="2024-12-31",
+            )
+            # df: DatetimeIndex rows, columns are CPIAUCSL and UNRATE
         """),
     },
 ]
@@ -374,6 +764,38 @@ async def list_tools() -> List[types.Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="request_data_source",
+            description=(
+                "Request a new financial data source to be added to the findata library. "
+                "Describe the data you need in plain English and the Codex AI agent will "
+                "automatically implement a wrapper function and register it in the MCP server. "
+                "Example requests: 'add Fama-French factors', "
+                "'add FRED macroeconomic series', 'add crypto prices from CoinGecko'. "
+                "The new function will be immediately available via search_tools after the "
+                "server is restarted. This tool runs the Codex CLI agent and may take up to "
+                "5 minutes — returns a status message when done."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "Natural-language description of the data source to add. "
+                            "Be specific about what data you want, e.g. "
+                            "'Fama-French 3-factor and 5-factor daily returns from Ken French data library'."
+                        ),
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Max seconds to wait for Codex (default 300).",
+                        "default": 300,
+                    },
+                },
+                "required": ["description"],
+            },
+        ),
     ]
 
 
@@ -440,6 +862,27 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
                 f"- **Install:** {', '.join(entry.get('install_requires', []))}\n"
             )
         return [types.TextContent(type="text", text="\n".join(lines))]
+
+    # ------------------------------------------------------------------ #
+    # request_data_source
+    # ------------------------------------------------------------------ #
+    elif name == "request_data_source":
+        description: str = arguments.get("description", "").strip()
+        timeout: int = int(arguments.get("timeout_seconds", 300))
+
+        if not description:
+            return [types.TextContent(
+                type="text",
+                text="Provide a non-empty description of the data source you want added.",
+            )]
+
+        status_msg = (
+            f"Starting Codex agent to implement: \"{description}\"\n"
+            f"Working directory: {_REPO_ROOT}\n"
+            f"Timeout: {timeout}s\n\n"
+        )
+        result = await _run_codex_agent(description, timeout=timeout)
+        return [types.TextContent(type="text", text=status_msg + result)]
 
     return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
