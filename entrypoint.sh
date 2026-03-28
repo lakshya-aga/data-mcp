@@ -30,21 +30,6 @@ if [ -z "$OPENAI_API_KEY" ] && [ ! -f "$CODEX_AUTH_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Claude Code
-# ---------------------------------------------------------------------------
-if [ -z "$ANTHROPIC_API_KEY" ] && [ ! -f "$CLAUDE_AUTH_FILE" ]; then
-    echo ""
-    echo "══════════════════════════════════════════════════"
-    echo "  Claude Code — OAuth login required"
-    echo "══════════════════════════════════════════════════"
-    echo "  A browser window will open (or copy the URL)."
-    echo ""
-    claude auth login
-    echo ""
-    echo "  Claude auth complete."
-fi
-
-# ---------------------------------------------------------------------------
 # Start MCP server
 # ---------------------------------------------------------------------------
 echo ""
