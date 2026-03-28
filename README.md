@@ -15,7 +15,7 @@ can write correct calls to the findata library.
 ## Project structure
 
 ```
-findata_mcp/
+data-mcp/
 ├── findata/                         Data library
 │   ├── equity_prices.py             get_equity_prices()           yfinance wrapper
 │   ├── sp500_composition.py         get_sp500_composition()       fja05680/sp500 (local git clone)
@@ -28,7 +28,8 @@ findata_mcp/
 ├── findata_mcp/
 │   └── server.py                    Tool registry + MCP handlers
 ├── Dockerfile
-├── .github/workflows/docker.yml     GHCR build + push
+├── docker-compose.yml
+├── .github/workflows/docker.yml     GHCR build + push on every push to main
 ├── pyproject.toml
 └── README.md
 ```
@@ -37,71 +38,42 @@ findata_mcp/
 
 ## Installation
 
-The recommended way to run findata-mcp is via Docker. The image is published to GHCR on every push to `main` and includes Codex CLI and Claude Code baked in.
+The recommended way to run findata-mcp is via Docker. The image is published to GHCR on every push to `main` and includes Codex CLI baked in.
 
 ### Prerequisites
 
 - Docker
-- Codex and/or Claude authenticated on your host machine
+- Codex authenticated on your host machine
 
-### 1. Authenticate on your host (one-time)
+### 1. Authenticate Codex (one-time)
 
 ```bash
 codex auth login    # opens browser → saves to ~/.codex/auth.json
-claude auth login   # opens browser → saves to ~/.claude/credentials.json
 ```
 
 ### 2. Pull and run
 
 ```bash
+curl -O https://raw.githubusercontent.com/lakshya-aga/data-mcp/main/docker-compose.yml
 docker compose up -d
 ```
 
-That's it. `docker-compose.yml` mounts `~/.codex` and `~/.claude` read-only so the container inherits your auth with no interactive prompts.
+`docker-compose.yml` mounts `~/.codex` read-only so the container inherits your Codex session with no interactive prompts. Named volumes keep generated files and data across restarts.
 
-Or with `docker run` directly:
-
-```bash
-docker run -d -p 8000:8000 \
-  -v ~/.codex:/root/.codex:ro \
-  -v ~/.claude:/root/.claude:ro \
-  ghcr.io/lakshya-aga/data-mcp:latest
-```
-
-### Auth options
-
-| Option | How |
-|--------|-----|
-| **Mount host auth (recommended)** | Login on host, mount `~/.codex` and `~/.claude` read-only |
-| **API keys** | Pass `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` as env vars — skips OAuth entirely |
-| **Interactive OAuth** | Run with `-it` and no auth — container prompts you on first start |
+### 3. Verify
 
 ```bash
-# API keys (non-interactive)
-docker run -d -p 8000:8000 \
-  -e OPENAI_API_KEY=sk-... \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
-  -e FRED_API_KEY=... \
-  ghcr.io/lakshya-aga/data-mcp:latest
+docker logs data-mcp-findata-mcp-1
+# should show: findata-mcp starting on :8000
 ```
 
-### Environment variables
+---
 
-| Variable | Description |
-|---|---|
-| `OPENAI_API_KEY` | Codex CLI auth — skips Codex OAuth if set |
-| `ANTHROPIC_API_KEY` | Claude auth — skips Claude OAuth if set |
-| `FRED_API_KEY` | Required for `get_fred_series`. Free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
-| `CODEX_CLI_PATH` | Override Codex binary path (defaults to `codex` on PATH) |
+## Connecting to the server
 
-### Endpoints
+### Claude Desktop
 
-| Endpoint | Purpose |
-|---|---|
-| `GET  /sse` | SSE stream — agents connect here first |
-| `POST /messages` | Agent sends tool calls here |
-
-### Connect Claude Desktop
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -113,64 +85,28 @@ docker run -d -p 8000:8000 \
 }
 ```
 
-### Connecting from an agent
+### Python (raw MCP client)
 
 ```python
-# OpenAI Agents SDK
+import asyncio
+from mcp.client.sse import sse_client
+from mcp.client.session import ClientSession
+
+async def main():
+    async with sse_client("http://localhost:8000/sse") as (r, w):
+        async with ClientSession(r, w) as s:
+            await s.initialize()
+            res = await s.call_tool("search_tools", {"query": "equity daily prices", "top_k": 3})
+            print(res.content[0].text)
+
+asyncio.run(main())
+```
+
+### OpenAI Agents SDK
+
+```python
 from agents.mcp import MCPServerSse
 mcp = MCPServerSse(url="http://localhost:8000/sse")
-
-# Raw MCP Python client
-from mcp.client.sse import sse_client
-from mcp import ClientSession
-
-async with sse_client("http://localhost:8000/sse") as (r, w):
-    async with ClientSession(r, w) as session:
-        await session.initialize()
-        result = await session.call_tool("search_tools", {"query": "equity prices"})
-```
-
-### `request_data_source` — writing new wrappers
-
-Codex is baked into the image. To let Codex write new wrapper files back to
-disk, mount the repo source:
-
-```bash
-docker run -d -p 8000:8000 \
-  -v ~/.codex:/root/.codex:ro \
-  -v $(pwd):/app \
-  ghcr.io/lakshya-aga/data-mcp:latest
-```
-
-New wrappers written by Codex are hot-reloaded into the live registry immediately — no restart needed.
-
----
-
-## Local installation
-
-```bash
-# Core install (MCP server + CSV/Excel file reading)
-pip install -e .
-
-# Everything except Bloomberg
-pip install -e ".[all]"
-
-# With dev/test tools
-pip install -e ".[dev]"
-```
-
-Copy `.env.example` to `.env` and fill in any keys you need.
-
----
-
-## Running locally
-
-```bash
-# stdio transport (Claude Desktop / CLI agents)
-findata-mcp
-
-# SSE/HTTP transport (web-based agents, OpenAI Agents SDK)
-findata-mcp-sse --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -178,23 +114,43 @@ findata-mcp-sse --host 0.0.0.0 --port 8000
 ## MCP tools
 
 | Tool | Description |
-|---|---|
+|------|-------------|
 | `search_tools` | Natural-language query → matching function docs + code examples |
 | `get_tool_doc` | Full reference for one function by exact name |
 | `list_all_tools` | All wrapper functions with summaries and tags |
 | `request_data_source` | Ask Codex to implement and register a new data wrapper |
 
-### `search_tools`
-```json
-{ "query": "fama french factors", "top_k": 2 }
+### search_tools
+
+```python
+res = await s.call_tool("search_tools", {"query": "fama french factors", "top_k": 2})
 ```
 
-### `request_data_source`
-```json
-{ "description": "add World Bank GDP indicators using wbdata" }
+### get_tool_doc
+
+```python
+res = await s.call_tool("get_tool_doc", {"tool_name": "get_equity_prices"})
 ```
-Codex writes `findata/<module>.py`, updates `server.py`, validates the import,
-and hot-reloads the new function into the live registry.
+
+### request_data_source
+
+```python
+res = await s.call_tool("request_data_source", {
+    "description": "get World Bank GDP per capita using the wbdata library"
+})
+```
+
+Codex writes `findata/<module>.py`, updates `server.py`, and hot-reloads the new function into the live registry — no restart needed.
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | Codex auth — skips OAuth if set (alternative to host auth mount) |
+| `FRED_API_KEY` | Required for `get_fred_series`. Free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
+| `CODEX_CLI_PATH` | Override Codex binary path (defaults to `codex` on PATH) |
 
 ---
 
