@@ -10,8 +10,8 @@ services:
       # Persist SP500 git clone across restarts
       - findata-data:/app/data
     environment:
-      # FRED_API_KEY: ...        # required for get_fred_series
-      # OPENAI_API_KEY: sk-...   # Option 1: API key instead of host auth mount
+      FRED_API_KEY: ""
+      # OPENAI_API_KEY: sk-...
       # ANTHROPIC_API_KEY: sk-ant-...
     restart: unless-stopped
 
