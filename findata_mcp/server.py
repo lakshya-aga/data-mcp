@@ -267,6 +267,7 @@ async def _run_codex_agent(request: str, timeout: int = 300) -> str:
         proc = await asyncio.create_subprocess_exec(
             _CODEX_CLI, "exec",
             "--full-auto",
+            "--skip-git-repo-check",
             "-C", str(_REPO_ROOT),
             prompt,
             stdout=asyncio.subprocess.PIPE,

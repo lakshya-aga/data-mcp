@@ -7,7 +7,8 @@ services:
       # Option 2: mount host auth (login once on your machine, no OAuth prompts in container)
       - ~/.codex:/root/.codex:ro
       - ~/.claude:/root/.claude:ro
-      # Persist SP500 git clone across restarts
+      # Writable overlay for Codex-generated files and SP500 git clone
+      - findata-app:/app/findata
       - findata-data:/app/data
     environment:
       FRED_API_KEY: ""
@@ -16,4 +17,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  findata-app:
   findata-data:
