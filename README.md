@@ -41,13 +41,21 @@ The image is published to GitHub Container Registry on every push to `main`.
 
 ### Pull and run
 
+Codex CLI and Claude Code are baked into the image. On first start the
+container walks you through OAuth for both — credentials are saved to named
+volumes so you only authenticate once.
+
 ```bash
-# Pull latest
 docker pull ghcr.io/lakshya-aga/data-mcp:latest
 
-# Run the SSE/HTTP server on port 8000
-docker run -p 8000:8000 ghcr.io/lakshya-aga/data-mcp:latest
+docker run -it -p 8000:8000 \
+  -v findata-codex:/root/.codex \
+  -v findata-claude:/root/.claude \
+  ghcr.io/lakshya-aga/data-mcp:latest
 ```
+
+- `-it` — required for the interactive OAuth prompts on first run
+- `findata-codex` / `findata-claude` — named volumes that persist credentials; subsequent starts skip auth and go straight to the server
 
 The server exposes two endpoints:
 
@@ -58,14 +66,21 @@ The server exposes two endpoints:
 
 ### Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `FRED_API_KEY` | — | Required for `get_fred_series`. Get one free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html). |
-| `CODEX_CLI_PATH` | `/Applications/Codex.app/Contents/Resources/codex` | Path to the Codex binary. Mount and set this to enable `request_data_source` (see below). |
+You can skip the interactive OAuth flow by supplying API keys directly:
+
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | Codex CLI auth — skips Codex OAuth if set |
+| `ANTHROPIC_API_KEY` | Claude auth — skips Claude OAuth if set |
+| `FRED_API_KEY` | Required for `get_fred_series`. Free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
+| `CODEX_CLI_PATH` | Override Codex binary path (defaults to `codex` on PATH) |
 
 ```bash
+# Non-interactive (API keys provided, no OAuth prompts)
 docker run -p 8000:8000 \
-  -e FRED_API_KEY=your_key_here \
+  -e OPENAI_API_KEY=sk-... \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e FRED_API_KEY=... \
   ghcr.io/lakshya-aga/data-mcp:latest
 ```
 
@@ -86,20 +101,20 @@ async with sse_client("http://localhost:8000/sse") as (r, w):
         result = await session.call_tool("search_tools", {"query": "equity prices"})
 ```
 
-### Enabling `request_data_source` in the container
+### `request_data_source` in the container
 
-`request_data_source` calls the Codex CLI to write new wrapper functions on the fly.
-Mount the Codex binary and the repo source so Codex can write files back:
+Codex CLI is already installed in the image. Mount the repo source so Codex
+can write new wrapper files back to disk:
 
 ```bash
-docker run -p 8000:8000 \
-  -v /Applications/Codex.app/Contents/Resources/codex:/usr/local/bin/codex \
+docker run -it -p 8000:8000 \
+  -v findata-codex:/root/.codex \
+  -v findata-claude:/root/.claude \
   -v $(pwd):/app \
-  -e CODEX_CLI_PATH=/usr/local/bin/codex \
   ghcr.io/lakshya-aga/data-mcp:latest
 ```
 
-New wrapper files written by Codex are hot-reloaded into the live registry
+New wrappers written by Codex are hot-reloaded into the live registry
 immediately — no restart needed.
 
 ---

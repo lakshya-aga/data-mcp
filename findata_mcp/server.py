@@ -45,6 +45,7 @@ import importlib
 import inspect
 import os
 import re
+import shutil
 import sys
 import textwrap
 from pathlib import Path
@@ -54,9 +55,14 @@ from typing import Any, Dict, List
 # Codex CLI integration
 # ---------------------------------------------------------------------------
 
-_CODEX_CLI = os.environ.get(
-    "CODEX_CLI_PATH",
-    "/Applications/Codex.app/Contents/Resources/codex",
+# Resolution order:
+#   1. CODEX_CLI_PATH env var (explicit override)
+#   2. `codex` on PATH (npm-installed inside the container)
+#   3. macOS app bundle (local development default)
+_CODEX_CLI = (
+    os.environ.get("CODEX_CLI_PATH")
+    or shutil.which("codex")
+    or "/Applications/Codex.app/Contents/Resources/codex"
 )
 _REPO_ROOT = Path(__file__).resolve().parent.parent  # data-mcp/
 
