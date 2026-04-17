@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import logging
 import os
 import re
 import shutil
@@ -50,6 +51,12 @@ import sys
 import textwrap
 from pathlib import Path
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 # ---------------------------------------------------------------------------
 # Codex CLI integration
@@ -104,8 +111,7 @@ def _hot_reload_new_sources() -> List[str]:
             try:
                 mod = importlib.import_module(module_name)
             except Exception:
-                # Broken import — Codex validation step should have caught
-                # this, but be defensive and skip rather than crashing.
+                logger.warning("Failed to import module %s, skipping", module_name, exc_info=True)
                 continue
 
         for attr_name in dir(mod):
