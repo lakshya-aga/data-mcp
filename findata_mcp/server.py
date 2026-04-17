@@ -66,12 +66,26 @@ logging.basicConfig(
 #   1. CODEX_CLI_PATH env var (explicit override)
 #   2. `codex` on PATH (npm-installed inside the container)
 #   3. macOS app bundle (local development default)
-_CODEX_CLI = (
-    os.environ.get("CODEX_CLI_PATH")
-    or shutil.which("codex")
-    or "/Applications/Codex.app/Contents/Resources/codex"
-)
+def _resolve_codex_cli() -> str:
+    """Resolve and validate the Codex CLI binary path."""
+    candidate = (
+        os.environ.get("CODEX_CLI_PATH")
+        or shutil.which("codex")
+        or "/Applications/Codex.app/Contents/Resources/codex"
+    )
+    resolved = Path(candidate).resolve()
+    # Validate: must be real file, not a directory or symlink to unexpected location
+    if resolved.is_file():
+        return str(resolved)
+    logger.warning("Codex CLI not found at %s; codex features will be unavailable", candidate)
+    return str(resolved)
+
+
+import threading
+
+_CODEX_CLI = _resolve_codex_cli()
 _REPO_ROOT = Path(__file__).resolve().parent.parent  # data-mcp/
+_REGISTRY_LOCK = threading.Lock()
 
 
 def _extract_tags_from_text(*texts: str) -> List[str]:
@@ -140,8 +154,9 @@ def _hot_reload_new_sources() -> List[str]:
                     df = {attr_name}(...)
                 """),
             }
-            _REGISTRY.append(entry)
-            _REGISTRY_BY_NAME[attr_name] = entry
+            with _REGISTRY_LOCK:
+                _REGISTRY.append(entry)
+                _REGISTRY_BY_NAME[attr_name] = entry
             added.append(attr_name)
 
     return added
@@ -268,6 +283,11 @@ def _build_codex_prompt(request: str) -> str:
 
 async def _run_codex_agent(request: str, timeout: int = 300) -> str:
     """Spawn `codex exec` to implement the requested data source."""
+    if not Path(_CODEX_CLI).is_file():
+        return (
+            f"Codex CLI not found at {_CODEX_CLI!r}. "
+            "Ensure Codex is installed or set CODEX_CLI_PATH."
+        )
     prompt = _build_codex_prompt(request)
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -825,7 +845,9 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
         if not query:
             return [types.TextContent(type="text", text="Provide a non-empty query.")]
 
-        ranked = sorted(_REGISTRY, key=lambda e: _score(e, query), reverse=True)
+        with _REGISTRY_LOCK:
+            registry_snapshot = list(_REGISTRY)
+        ranked = sorted(registry_snapshot, key=lambda e: _score(e, query), reverse=True)
         top = ranked[:top_k]
 
         if _score(top[0], query) == 0:
@@ -851,9 +873,11 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
     # ------------------------------------------------------------------ #
     elif name == "get_tool_doc":
         tool_name: str = arguments.get("tool_name", "").strip()
-        entry = _REGISTRY_BY_NAME.get(tool_name)
+        with _REGISTRY_LOCK:
+            entry = _REGISTRY_BY_NAME.get(tool_name)
+            available_names = list(_REGISTRY_BY_NAME.keys()) if entry is None else None
         if entry is None:
-            available = ", ".join(f"`{n}`" for n in _REGISTRY_BY_NAME)
+            available = ", ".join(f"`{n}`" for n in available_names)
             return [types.TextContent(
                 type="text",
                 text=f"Unknown tool `{tool_name}`.  Available: {available}",
@@ -864,8 +888,10 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCont
     # list_all_tools
     # ------------------------------------------------------------------ #
     elif name == "list_all_tools":
+        with _REGISTRY_LOCK:
+            registry_snapshot = list(_REGISTRY)
         lines = ["# findata — available wrapper functions\n"]
-        for entry in _REGISTRY:
+        for entry in registry_snapshot:
             stub_flag = "  *(stub — implement before use)*" if entry["stub"] else ""
             lines.append(
                 f"### `{entry['name']}`{stub_flag}\n"

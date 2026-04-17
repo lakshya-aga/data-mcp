@@ -1,9 +1,15 @@
 README.md
 pyproject.toml
 findata/bloomberg.py
+findata/cboe_volatility.py
+findata/coingecko.py
 findata/equity_prices.py
+findata/fama_french.py
 findata/file_reader.py
+findata/fred.py
+findata/ken_french_factors.py
 findata/sp500_composition.py
+findata_mcp/__main__.py
 findata_mcp/server.py
 findata_mcp.egg-info/PKG-INFO
 findata_mcp.egg-info/SOURCES.txt
