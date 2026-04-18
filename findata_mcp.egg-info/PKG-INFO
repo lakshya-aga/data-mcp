@@ -42,20 +42,21 @@ can write correct calls to the findata library.
 ## Project structure
 
 ```
-findata_mcp/
+data-mcp/
 ├── findata/                         Data library
-│   ├── __init__.py
-│   ├── equity_prices.py             get_equity_prices()         yfinance wrapper
-│   ├── sp500_composition.py         get_sp500_composition()     fja05680/sp500 (local git clone)
-│   │                                refresh_sp500_cache()
-│   ├── file_reader.py               get_file_data()             CSV / Parquet / Excel
-│   └── bloomberg.py                 get_bloomberg_data()        blpapi (stub — implement me)
-├── findata_mcp/                     MCP server package
-│   ├── __init__.py
-│   ├── __main__.py
+│   ├── equity_prices.py             get_equity_prices()           yfinance wrapper
+│   ├── sp500_composition.py         get_sp500_composition()       fja05680/sp500 (local git clone)
+│   ├── fama_french.py               get_fama_french_factors()     Ken French Data Library
+│   ├── fred.py                      get_fred_series()             FRED macroeconomic series
+│   ├── cboe_volatility.py           get_cboe_volatility_indices() VIX / VVIX
+│   ├── coingecko.py                 get_coingecko_ohlcv()         CoinGecko public API
+│   ├── file_reader.py               get_file_data()               CSV / Parquet / Excel
+│   └── bloomberg.py                 get_bloomberg_data()          blpapi (stub)
+├── findata_mcp/
 │   └── server.py                    Tool registry + MCP handlers
-├── tests/
-│   └── test_findata.py
+├── Dockerfile
+├── docker-compose.yml
+├── .github/workflows/docker.yml     GHCR build + push on every push to main
 ├── pyproject.toml
 └── README.md
 ```
@@ -64,73 +65,75 @@ findata_mcp/
 
 ## Installation
 
+The recommended way to run findata-mcp is via Docker. The image is published to GHCR on every push to `main` and includes Codex CLI baked in.
+
+### Prerequisites
+
+- Docker
+- Codex authenticated on your host machine
+
+### 1. Authenticate Codex (one-time)
+
 ```bash
-cd findata_mcp
-
-# Core install (MCP server + CSV/Excel file reading)
-pip install -e .
-
-# Add yfinance support
-pip install -e ".[yfinance]"
-
-# Add Parquet support
-pip install -e ".[parquet]"
-
-# Add Bloomberg support (requires Bloomberg Terminal or B-PIPE)
-pip install -e ".[bloomberg]"
-
-# Everything except Bloomberg
-pip install -e ".[all]"
-
-# With dev/test tools
-pip install -e ".[dev]"
+codex auth login    # opens browser → saves to ~/.codex/auth.json
 ```
 
-> **Note:** The S&P 500 composition tool requires `git` on your system PATH
-> (not a Python package).  It clones the dataset on first use.
+### 2. Pull and run
+
+```bash
+curl -O https://raw.githubusercontent.com/lakshya-aga/data-mcp/main/docker-compose.yml
+docker compose up -d
+```
+
+`docker-compose.yml` mounts `~/.codex` read-only so the container inherits your Codex session with no interactive prompts. Named volumes keep generated files and data across restarts.
+
+### 3. Verify
+
+```bash
+docker logs data-mcp-findata-mcp-1
+# should show: findata-mcp starting on :8000
+```
 
 ---
 
-## Running the MCP server
-
-```bash
-# After pip install -e .
-findata-mcp
-
-# From source without installing
-python -m findata_mcp.server
-```
-
-The server communicates over **stdio** (standard MCP transport).
-
----
-
-## MCP client configuration
+## Connecting to the server
 
 ### Claude Desktop
-`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "findata": {
-      "command": "findata-mcp"
+      "url": "http://localhost:8000/sse"
     }
   }
 }
 ```
 
-### Cursor / other clients
-```json
-{
-  "mcpServers": {
-    "findata": {
-      "command": "python",
-      "args": ["-m", "findata_mcp.server"]
-    }
-  }
-}
+### Python (raw MCP client)
+
+```python
+import asyncio
+from mcp.client.sse import sse_client
+from mcp.client.session import ClientSession
+
+async def main():
+    async with sse_client("http://localhost:8000/sse") as (r, w):
+        async with ClientSession(r, w) as s:
+            await s.initialize()
+            res = await s.call_tool("search_tools", {"query": "equity daily prices", "top_k": 3})
+            print(res.content[0].text)
+
+asyncio.run(main())
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents.mcp import MCPServerSse
+mcp = MCPServerSse(url="http://localhost:8000/sse")
 ```
 
 ---
@@ -138,26 +141,43 @@ The server communicates over **stdio** (standard MCP transport).
 ## MCP tools
 
 | Tool | Description |
-|---|---|
+|------|-------------|
 | `search_tools` | Natural-language query → matching function docs + code examples |
 | `get_tool_doc` | Full reference for one function by exact name |
 | `list_all_tools` | All wrapper functions with summaries and tags |
+| `request_data_source` | Ask Codex to implement and register a new data wrapper |
 
-### `search_tools`
-```json
-{ "query": "equity daily prices", "top_k": 2 }
-```
-Returns: our wrapper's signature, parameter docs, and a copy-paste example.
+### search_tools
 
-### `get_tool_doc`
-```json
-{ "tool_name": "get_equity_prices" }
+```python
+res = await s.call_tool("search_tools", {"query": "fama french factors", "top_k": 2})
 ```
 
-### `list_all_tools`
-```json
-{}
+### get_tool_doc
+
+```python
+res = await s.call_tool("get_tool_doc", {"tool_name": "get_equity_prices"})
 ```
+
+### request_data_source
+
+```python
+res = await s.call_tool("request_data_source", {
+    "description": "get World Bank GDP per capita using the wbdata library"
+})
+```
+
+Codex writes `findata/<module>.py`, updates `server.py`, and hot-reloads the new function into the live registry — no restart needed.
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | Codex auth — skips OAuth if set (alternative to host auth mount) |
+| `FRED_API_KEY` | Required for `get_fred_series`. Free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
+| `CODEX_CLI_PATH` | Override Codex binary path (defaults to `codex` on PATH) |
 
 ---
 
@@ -171,79 +191,54 @@ df = get_equity_prices(
     tickers=["AAPL", "MSFT"],
     start_date="2024-01-01",
     end_date="2024-12-31",
-    fields=["Close"],       # Open High Low Close Volume — default: all
+    fields=["Close"],
     frequency="1d",         # 1d 5d 1wk 1mo 3mo
-    auto_adjust=True,
 )
-# Single ticker  → flat columns: df["Close"]
-# Multi ticker   → MultiIndex:   df["Close"]["AAPL"]
+```
+
+### `get_fama_french_factors`
+```python
+from findata.fama_french import get_fama_french_factors
+
+df = get_fama_french_factors(factor_model="5", start_date="2010-01-01", end_date="2020-12-31")
+# columns: Mkt-RF, SMB, HML, RMW, CMA, RF
+```
+
+### `get_fred_series`
+```python
+from findata.fred import get_fred_series
+
+df = get_fred_series(["CPIAUCSL", "UNRATE"], start_date="2015-01-01", end_date="2024-12-31")
+```
+
+### `get_coingecko_ohlcv`
+```python
+from findata.coingecko import get_coingecko_ohlcv
+
+df = get_coingecko_ohlcv("bitcoin", vs_currency="usd", days=90)
+# columns: open, high, low, close, volume
+```
+
+### `get_cboe_volatility_indices`
+```python
+from findata.cboe_volatility import get_cboe_volatility_indices
+
+df = get_cboe_volatility_indices(symbols=["^VIX", "^VVIX"], start_date="2020-01-01", end_date="2024-12-31")
 ```
 
 ### `get_sp500_composition`
 ```python
-from findata.sp500_composition import get_sp500_composition, refresh_sp500_cache
+from findata.sp500_composition import get_sp500_composition
 
-# Clones https://github.com/fja05680/sp500 to ~/.cache/findata/sp500/ on first call
-members = get_sp500_composition("2024-12-31")           # list[str], ~503 tickers
-df      = get_sp500_composition("2024-12-31", return_dataframe=True)
-
-refresh_sp500_cache()   # git pull + clear in-memory cache
-
-# Override cache location
-import os
-os.environ["FINDATA_CACHE_DIR"] = "/data/cache"
+members = get_sp500_composition("2024-12-31")   # list[str], ~503 tickers
 ```
 
 ### `get_file_data`
 ```python
 from findata.file_reader import get_file_data
 
-df = get_file_data(
-    "data/prices.parquet",
-    tickers=["AAPL", "MSFT"],
-    start_date="2023-01-01",
-    end_date="2023-12-31",
-    fields=["close", "volume"],
-    date_column="date",       # override column names if needed
-    ticker_column="ticker",
-)
+df = get_file_data("data/prices.parquet", tickers=["AAPL"], start_date="2023-01-01", end_date="2023-12-31")
 ```
-
-### `get_bloomberg_data` *(stub — implement session logic first)*
-```python
-from findata.bloomberg import get_bloomberg_data
-
-df = get_bloomberg_data(
-    tickers=["AAPL US Equity"],
-    fields=["PX_LAST", "VOLUME"],
-    start_date="2024-01-01",
-    end_date="2024-12-31",
-    request_type="HistoricalDataRequest",  # or "ReferenceDataRequest"
-    overrides={"BEST_FPERIOD_OVERRIDE": "1BF"},   # optional
-)
-```
-
----
-
-## Adding a new data source
-
-1. Create `findata/your_source.py` with a well-documented wrapper function.
-2. Add one entry to `_REGISTRY` in `findata_mcp/server.py`:
-
-```python
-{
-    "name": "get_your_data",
-    "callable": get_your_data,
-    "module": "findata.your_source",
-    "tags": ["keyword1", "keyword2"],
-    "stub": False,
-    "install_requires": ["your-package"],
-    "summary": "One sentence describing what this wrapper fetches.",
-    "example": "from findata.your_source import get_your_data\ndf = get_your_data(...)\n",
-}
-```
-
-3. Restart the MCP server — the function is immediately discoverable.
 
 ---
 

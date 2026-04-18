@@ -33,7 +33,12 @@ DateLike = Union[str, date, datetime]
 def _cache_dir() -> Path:
     """Return the path to the local sp500 repo clone."""
     base = os.environ.get("FINDATA_CACHE_DIR", str(Path.home() / ".cache" / "findata"))
-    return Path(base) / "sp500"
+    resolved = Path(base).resolve()
+    # Ensure cache dir lives under a safe location (user home or /tmp)
+    home = Path.home().resolve()
+    if not (str(resolved).startswith(str(home)) or str(resolved).startswith("/tmp")):
+        resolved = home / ".cache" / "findata"
+    return resolved / "sp500"
 
 
 def _ensure_repo() -> Path:
