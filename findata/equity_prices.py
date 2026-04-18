@@ -120,12 +120,6 @@ def get_equity_prices(
         multi_level_index=True,
     )
 
-    if raw.empty:
-        raise ValueError(
-            f"No data returned for tickers={tickers} in range "
-            f"{start_date} to {end_date}. Check symbols and date range."
-        )
-
     if isinstance(raw.columns, pd.MultiIndex):
         if fields:
             raw = raw.loc[:, raw.columns.get_level_values(0).isin(fields)]
