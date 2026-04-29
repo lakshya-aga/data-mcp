@@ -233,6 +233,20 @@ def _check_coingecko() -> CheckResult:
     return runner.run(fn)
 
 
+def _check_binance() -> CheckResult:
+    runner = _make("binance")
+
+    def fn():
+        from findata.binance import get_binance_ohlcv
+
+        # 5 candles is the smallest sensible probe; daily interval is the
+        # least likely to hit weekend / micro-rollover edge cases on the
+        # health endpoint.
+        return get_binance_ohlcv("BTCUSDT", interval="1d", limit=5, timeout=15)
+
+    return runner.run(fn)
+
+
 def _check_sp500_composition() -> CheckResult:
     runner = _make("sp500_composition")
 
@@ -296,6 +310,7 @@ ALL_CHECKS: dict[str, Callable[[], CheckResult]] = {
     "fred": _check_fred,
     "cboe_volatility": _check_cboe_volatility,
     "coingecko": _check_coingecko,
+    "binance": _check_binance,
     "sp500_composition": _check_sp500_composition,
     "file_reader": _check_file_reader,
     "bloomberg": _check_bloomberg,

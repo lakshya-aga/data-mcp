@@ -332,6 +332,7 @@ from findata.ken_french_factors import get_ken_french_factors
 from findata.fred import get_fred_series
 from findata.cboe_volatility import get_cboe_volatility_indices
 from findata.coingecko import get_coingecko_ohlcv
+from findata.binance import get_binance_ohlcv
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -430,6 +431,36 @@ _REGISTRY: List[Dict[str, Any]] = [
             # 90 days of BTC/USD OHLCV
             df = get_coingecko_ohlcv("bitcoin", vs_currency="usd", days=90)
             # df: DatetimeIndex rows, columns open/high/low/close/volume
+        """),
+    },
+    {
+        "name": "get_binance_ohlcv",
+        "callable": get_binance_ohlcv,
+        "module": "findata.binance",
+        "tags": [
+            "crypto", "cryptocurrency", "binance", "btc", "eth", "ohlcv",
+            "candles", "klines", "bars", "prices", "volume", "market data",
+            "historical", "spot", "usdt", "public api", "rest",
+        ],
+        "stub": False,
+        "install_requires": ["pandas", "requests"],
+        "summary": (
+            "Fetch crypto OHLCV (klines) from Binance Spot's public REST API. "
+            "No auth, paginated up to 1000 candles per request, supports "
+            "1-second to 1-month intervals."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.binance import get_binance_ohlcv
+
+            # 365 days of BTCUSDT daily candles
+            df = get_binance_ohlcv("BTCUSDT", interval="1d",
+                                   start_date="2024-01-01",
+                                   end_date="2024-12-31")
+            # df: DatetimeIndex (UTC, tz-naive) rows,
+            #   columns open/high/low/close/volume/quote_volume/trades
+
+            # Last 24 4-hour candles for ETHUSDT
+            df = get_binance_ohlcv("ETHUSDT", interval="4h", limit=24)
         """),
     },
     {

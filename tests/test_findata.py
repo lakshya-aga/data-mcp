@@ -55,6 +55,101 @@ class TestGetEquityPrices:
                 get_equity_prices(["AAPL"], "2024-01-01", "2024-01-05")
 
 
+# ── binance ───────────────────────────────────────────────────────────────────
+
+
+def _mock_binance_kline_row(open_time_ms: int, close: float = 60000.0):
+    """Build one Binance klines row with the 12-element shape the API returns."""
+    return [
+        open_time_ms,                # open_time
+        f"{close - 100:.2f}",        # open
+        f"{close + 100:.2f}",        # high
+        f"{close - 200:.2f}",        # low
+        f"{close:.2f}",              # close
+        "100.5",                     # volume
+        open_time_ms + 86_400_000 - 1,  # close_time
+        f"{close * 100.5:.2f}",      # quote_volume
+        12345,                       # trades
+        "50.0",                      # taker_buy_base
+        f"{close * 50.0:.2f}",       # taker_buy_quote
+        "0",                         # ignore
+    ]
+
+
+class TestGetBinanceOhlcv:
+
+    def test_raises_on_empty_symbol(self):
+        from findata.binance import get_binance_ohlcv
+        with pytest.raises(ValueError, match="symbol"):
+            get_binance_ohlcv("", interval="1d")
+
+    def test_raises_on_bad_interval(self):
+        from findata.binance import get_binance_ohlcv
+        with pytest.raises(ValueError, match="interval"):
+            get_binance_ohlcv("BTCUSDT", interval="bad")
+
+    def test_raises_on_bad_limit(self):
+        from findata.binance import get_binance_ohlcv
+        with pytest.raises(ValueError, match="limit"):
+            get_binance_ohlcv("BTCUSDT", limit=5000)
+
+    def test_raises_on_inverted_range(self):
+        from findata.binance import get_binance_ohlcv
+        with pytest.raises(ValueError, match=r"end_date must be"):
+            get_binance_ohlcv(
+                "BTCUSDT", start_date="2024-12-31", end_date="2024-01-01",
+            )
+
+    def test_basic_shape_and_columns(self):
+        from findata.binance import get_binance_ohlcv
+        rows = [_mock_binance_kline_row(open_time_ms=1_700_000_000_000 + i * 86_400_000)
+                for i in range(3)]
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.json.return_value = rows
+            mock_get.return_value.raise_for_status = lambda: None
+            df = get_binance_ohlcv("BTCUSDT", interval="1d", limit=3)
+        assert df.shape == (3, 7)
+        assert set(["open", "high", "low", "close", "volume",
+                    "quote_volume", "trades"]) == set(df.columns)
+        assert df.index.name == "date"
+        # close column round-trips as float, trades as Int64
+        assert df["close"].dtype.kind == "f"
+        assert str(df["trades"].dtype) == "Int64"
+
+    def test_dedup_overlapping_pages(self):
+        """Pagination boundary candle should not appear twice."""
+        from findata.binance import get_binance_ohlcv
+        page1 = [_mock_binance_kline_row(open_time_ms=1_700_000_000_000 + i * 86_400_000)
+                 for i in range(2)]
+        # Page 2 starts at the same boundary as page 1's last; the loader
+        # should drop the duplicate and return 3 unique rows.
+        page2 = [_mock_binance_kline_row(open_time_ms=1_700_000_000_000 + i * 86_400_000)
+                 for i in range(1, 3)]
+        responses = [page1, page2, []]
+        with patch("requests.get") as mock_get:
+            def fake_get(*_a, **_kw):
+                m = MagicMock()
+                m.json.return_value = responses.pop(0)
+                m.raise_for_status = lambda: None
+                return m
+            mock_get.side_effect = fake_get
+            df = get_binance_ohlcv(
+                "BTCUSDT", interval="1d",
+                start_date="2023-11-14", end_date="2023-11-30",
+                limit=2,
+            )
+        # 3 unique open_times across the two overlapping pages.
+        assert df.shape[0] == 3
+
+    def test_raises_when_no_candles(self):
+        from findata.binance import get_binance_ohlcv
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.json.return_value = []
+            mock_get.return_value.raise_for_status = lambda: None
+            with pytest.raises(ValueError, match="no candles"):
+                get_binance_ohlcv("FAKEUSDT", interval="1d", limit=10)
+
+
 # ── sp500_composition ─────────────────────────────────────────────────────────
 
 def _mock_csv_df():
