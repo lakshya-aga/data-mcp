@@ -18,11 +18,20 @@ can write correct calls to the findata library.
 data-mcp/
 ├── findata/                         Data library
 │   ├── equity_prices.py             get_equity_prices()           yfinance wrapper
+│   ├── stooq.py                     get_stooq_prices()            Stooq (international markets)
 │   ├── sp500_composition.py         get_sp500_composition()       fja05680/sp500 (local git clone)
 │   ├── fama_french.py               get_fama_french_factors()     Ken French Data Library
+│   ├── ken_french_factors.py        get_ken_french_factors()      Ken French Data Library
 │   ├── fred.py                      get_fred_series()             FRED macroeconomic series
 │   ├── cboe_volatility.py           get_cboe_volatility_indices() VIX / VVIX
 │   ├── coingecko.py                 get_coingecko_ohlcv()         CoinGecko public API
+│   ├── binance.py                   get_binance_klines()          Binance public REST API
+│   ├── coinbase.py                  get_coinbase_candles()        Coinbase Exchange public REST API
+│   ├── sec_edgar.py                 get_sec_edgar_filings()       SEC EDGAR submissions JSON
+│   ├── alphavantage.py              get_alphavantage_prices()     AlphaVantage REST API
+│   ├── tiingo.py                    get_tiingo_prices()           Tiingo REST API
+│   ├── polygon.py                   get_polygon_aggregates()      Polygon.io REST API
+│   ├── wrds_data.py                 get_wrds_data()               CRSP/Compustat via WRDS
 │   ├── file_reader.py               get_file_data()               CSV / Parquet / Excel
 │   └── bloomberg.py                 get_bloomberg_data()          blpapi (stub)
 ├── findata_mcp/
@@ -150,6 +159,11 @@ Codex writes `findata/<module>.py`, updates `server.py`, and hot-reloads the new
 |----------|-------------|
 | `OPENAI_API_KEY` | Codex auth — skips OAuth if set (alternative to host auth mount) |
 | `FRED_API_KEY` | Required for `get_fred_series`. Free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
+| `ALPHAVANTAGE_API_KEY` | Required for `get_alphavantage_prices`. Free tier at [alphavantage.co](https://www.alphavantage.co/support/#api-key) |
+| `TIINGO_API_KEY` | Required for `get_tiingo_prices`. Free tier at [tiingo.com](https://www.tiingo.com/account/api/token) |
+| `POLYGON_API_KEY` | Required for `get_polygon_aggregates`. Free tier at [polygon.io](https://polygon.io/dashboard/api-keys) |
+| `SEC_EDGAR_USER_AGENT` | Required for `get_sec_edgar_filings`. Descriptive contact string, e.g. `"Acme Research research@example.com"` |
+| `WRDS_USERNAME` / `WRDS_PASSWORD` | Required for `get_wrds_data` if not using `~/.pgpass`. Free for university affiliates at [wrds.wharton.upenn.edu](https://wrds-www.wharton.upenn.edu/) |
 | `CODEX_CLI_PATH` | Override Codex binary path (defaults to `codex` on PATH) |
 
 ---

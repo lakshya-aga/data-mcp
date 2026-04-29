@@ -332,6 +332,14 @@ from findata.ken_french_factors import get_ken_french_factors
 from findata.fred import get_fred_series
 from findata.cboe_volatility import get_cboe_volatility_indices
 from findata.coingecko import get_coingecko_ohlcv
+from findata.stooq import get_stooq_prices
+from findata.sec_edgar import get_sec_edgar_filings
+from findata.binance import get_binance_klines
+from findata.coinbase import get_coinbase_candles
+from findata.alphavantage import get_alphavantage_prices
+from findata.tiingo import get_tiingo_prices
+from findata.polygon import get_polygon_aggregates
+from findata.wrds_data import get_wrds_data
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -631,6 +639,259 @@ _REGISTRY: List[Dict[str, Any]] = [
                 end_date="2024-12-31",
             )
             # df: DatetimeIndex rows, columns are CPIAUCSL and UNRATE
+        """),
+    },
+    {
+        "name": "get_stooq_prices",
+        "callable": get_stooq_prices,
+        "module": "findata.stooq",
+        "tags": [
+            "stooq", "international", "global", "equity", "etf", "index",
+            "fx", "forex", "commodities", "ohlcv", "daily", "historical",
+            "europe", "warsaw", "wse", "free",
+        ],
+        "stub": False,
+        "install_requires": ["pandas-datareader"],
+        "summary": (
+            "Fetch daily OHLCV bars from Stooq, often cleaner than Yahoo "
+            "for international markets, FX, and indices."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.stooq import get_stooq_prices
+
+            # US equity + S&P 500 index from Stooq
+            df = get_stooq_prices(
+                tickers=["aapl.us", "^spx"],
+                start_date="2020-01-01",
+                end_date="2024-12-31",
+            )
+            # df: DatetimeIndex, MultiIndex columns (field, ticker) for >1 ticker
+        """),
+    },
+    {
+        "name": "get_sec_edgar_filings",
+        "callable": get_sec_edgar_filings,
+        "module": "findata.sec_edgar",
+        "tags": [
+            "sec", "edgar", "filings", "10-k", "10-q", "8-k", "13f",
+            "company", "cik", "annual report", "quarterly report",
+            "regulatory", "free", "us equities",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch the recent filings list for a company from SEC EDGAR. "
+            "Requires SEC_EDGAR_USER_AGENT (descriptive contact string)."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.sec_edgar import get_sec_edgar_filings
+
+            # 10-K and 10-Q filings for Apple (CIK 320193)
+            df = get_sec_edgar_filings(
+                cik="320193",
+                form_types=["10-K", "10-Q"],
+                start_date="2018-01-01",
+                user_agent="Acme Research research@example.com",
+            )
+            # df: indexed by filing_date, includes accessionNumber, form,
+            # primaryDocument, and a derived filing_url to the document.
+        """),
+    },
+    {
+        "name": "get_binance_klines",
+        "callable": get_binance_klines,
+        "module": "findata.binance",
+        "tags": [
+            "binance", "crypto", "cryptocurrency", "klines", "candles",
+            "ohlcv", "minute", "tick", "intraday", "spot", "btcusdt",
+            "ethusdt", "public api", "free",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch crypto OHLCV klines (1m–1M intervals) from the Binance "
+            "public REST API. Pages automatically beyond the 1000-candle cap."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.binance import get_binance_klines
+
+            # 1-minute BTCUSDT bars for one week
+            df = get_binance_klines(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_date="2024-01-01",
+                end_date="2024-01-07",
+            )
+            # df: DatetimeIndex (open_time, UTC-naive), columns include
+            # open/high/low/close/volume and quote_asset_volume, num_trades.
+        """),
+    },
+    {
+        "name": "get_coinbase_candles",
+        "callable": get_coinbase_candles,
+        "module": "findata.coinbase",
+        "tags": [
+            "coinbase", "crypto", "cryptocurrency", "candles", "ohlcv",
+            "minute", "intraday", "btc-usd", "eth-usd", "public api",
+            "exchange", "free",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch crypto OHLCV candles from the Coinbase Exchange public "
+            "REST API. Pages automatically beyond the 300-candle cap."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.coinbase import get_coinbase_candles
+
+            # 1-hour BTC-USD candles for one week
+            df = get_coinbase_candles(
+                product_id="BTC-USD",
+                granularity="1h",
+                start_date="2024-01-01",
+                end_date="2024-01-07",
+            )
+            # df: DatetimeIndex, columns low/high/open/close/volume.
+        """),
+    },
+    {
+        "name": "get_alphavantage_prices",
+        "callable": get_alphavantage_prices,
+        "module": "findata.alphavantage",
+        "tags": [
+            "alphavantage", "alpha vantage", "intraday", "minute bars",
+            "equity", "stocks", "etf", "ohlcv", "adjusted", "free tier",
+            "rate limited",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch daily or intraday equity bars from AlphaVantage. "
+            "Requires ALPHAVANTAGE_API_KEY; free tier is heavily rate-limited."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.alphavantage import get_alphavantage_prices
+
+            # 5-minute intraday bars for AAPL
+            df = get_alphavantage_prices(
+                symbol="AAPL",
+                interval="5min",
+                start_date="2024-12-01",
+                end_date="2024-12-31",
+            )
+
+            # Adjusted daily bars
+            df = get_alphavantage_prices(
+                symbol="MSFT",
+                interval="1d",
+                adjusted=True,
+            )
+            # df: DatetimeIndex, columns open/high/low/close/volume
+            # (and adjusted_close/dividend/split_coefficient when adjusted).
+        """),
+    },
+    {
+        "name": "get_tiingo_prices",
+        "callable": get_tiingo_prices,
+        "module": "findata.tiingo",
+        "tags": [
+            "tiingo", "equity", "etf", "daily", "weekly", "monthly",
+            "intraday", "iex", "ohlcv", "adjusted", "splits", "dividends",
+            "api key",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch daily or intraday equity bars from Tiingo. "
+            "Requires TIINGO_API_KEY; intraday/IEX endpoints are paid-only."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.tiingo import get_tiingo_prices
+
+            # Daily AAPL bars (adjusted columns included by default)
+            df = get_tiingo_prices(
+                ticker="AAPL",
+                start_date="2024-01-01",
+                end_date="2024-12-31",
+                frequency="daily",
+            )
+
+            # 5-minute IEX bars (paid plan)
+            df = get_tiingo_prices("AAPL", "2024-12-01", "2024-12-31",
+                                   frequency="5min")
+        """),
+    },
+    {
+        "name": "get_polygon_aggregates",
+        "callable": get_polygon_aggregates,
+        "module": "findata.polygon",
+        "tags": [
+            "polygon", "polygon.io", "aggregates", "bars", "ohlcv",
+            "minute", "hour", "day", "intraday", "equity", "fx", "crypto",
+            "vwap", "transactions", "api key",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch aggregate OHLCV bars from Polygon.io across equities, FX, "
+            "and crypto. Requires POLYGON_API_KEY."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.polygon import get_polygon_aggregates
+
+            # 1-minute AAPL bars for one week
+            df = get_polygon_aggregates(
+                ticker="AAPL",
+                start_date="2024-01-02",
+                end_date="2024-01-08",
+                multiplier=1,
+                timespan="minute",
+            )
+
+            # Daily BTC-USD via Polygon's crypto namespace
+            df = get_polygon_aggregates("X:BTCUSD", "2024-01-01",
+                                        "2024-12-31", timespan="day")
+            # df: DatetimeIndex, columns open/high/low/close/volume/vwap/transactions.
+        """),
+    },
+    {
+        "name": "get_wrds_data",
+        "callable": get_wrds_data,
+        "module": "findata.wrds_data",
+        "tags": [
+            "wrds", "crsp", "compustat", "wharton", "academic", "research",
+            "permno", "gvkey", "fundamentals", "dsf", "msf", "funda",
+            "university", "sql",
+        ],
+        "stub": False,
+        "install_requires": ["wrds"],
+        "summary": (
+            "Query CRSP / Compustat / WRDS tables and return a DataFrame. "
+            "Requires WRDS credentials (~/.pgpass or WRDS_USERNAME/PASSWORD)."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.wrds_data import get_wrds_data
+
+            # CRSP daily stock file for Apple (permno=14593)
+            df = get_wrds_data(
+                library="crsp",
+                table="dsf",
+                columns=["permno", "date", "prc", "ret", "vol"],
+                where="permno = 14593",
+                date_column="date",
+                start_date="2020-01-01",
+                end_date="2024-12-31",
+            )
+
+            # Compustat annual fundamentals
+            df = get_wrds_data(
+                library="comp",
+                table="funda",
+                columns=["gvkey", "datadate", "at", "lt", "ni", "revt"],
+                where="gvkey in ('001690', '012141') and indfmt='INDL'",
+                date_column="datadate",
+                start_date="2010-01-01",
+            )
         """),
     },
 ]
