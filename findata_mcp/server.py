@@ -339,6 +339,11 @@ from findata.fundamentals import get_equity_fundamentals
 from findata.analyst_consensus import get_analyst_consensus
 from findata.earnings_calendar import get_earnings_calendar
 from findata.returns_stats import compute_returns_stats
+from findata.candlestick_patterns import detect_candlestick_patterns
+from findata.support_resistance import compute_support_resistance
+from findata.trend_indicators import compute_trend_indicators
+from findata.trend_regime import compute_trend_regime
+from findata.ohlc_chart import plot_ohlc_chart
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -599,6 +604,142 @@ _REGISTRY: List[Dict[str, Any]] = [
 
             df = get_earnings_calendar("AAPL", days_back=730, days_forward=120)
             df[["eps_estimate", "eps_actual", "surprise_pct", "is_past"]].tail(8)
+        """),
+    },
+    # ─── Technical analysis ────────────────────────────────────────
+    {
+        "name": "detect_candlestick_patterns",
+        "callable": detect_candlestick_patterns,
+        "module": "findata.candlestick_patterns",
+        "tags": [
+            "candlestick", "patterns", "hammer", "engulfing", "doji",
+            "morning star", "shooting star", "technical analysis", "ta",
+            "pandas-ta", "bullish", "bearish", "reversal",
+        ],
+        "stub": False,
+        "install_requires": ["pandas-ta", "yfinance"],
+        "summary": (
+            "Detect candlestick patterns (hammer, engulfing, doji, morning "
+            "star, …) on a ticker's recent OHLC history. Returns a list of "
+            "{date, pattern, signal: bullish/bearish, close} events plus a "
+            "one-line summary."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.candlestick_patterns import detect_candlestick_patterns
+
+            r = detect_candlestick_patterns("AAPL", lookback_days=90)
+            print(r["summary"])
+            for ev in r["patterns"][:5]:
+                print(ev)
+        """),
+    },
+    {
+        "name": "compute_support_resistance",
+        "callable": compute_support_resistance,
+        "module": "findata.support_resistance",
+        "tags": [
+            "support", "resistance", "levels", "pivot", "technical analysis",
+            "ta", "find_peaks", "kmeans", "cluster", "horizontal lines",
+        ],
+        "stub": False,
+        "install_requires": ["scipy", "scikit-learn", "yfinance"],
+        "summary": (
+            "Detect candidate support/resistance levels via "
+            "scipy.signal.find_peaks + KMeans clustering. Returns a list "
+            "of {price, type, touches, last_touch, strength} sorted by "
+            "relevance. Also exposes the nearest support and resistance "
+            "to current price for direct quoting."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.support_resistance import compute_support_resistance
+
+            r = compute_support_resistance("AAPL", lookback_days=252,
+                                            n_levels=5)
+            print(r["summary"])
+            for lv in r["levels"][:5]:
+                print(lv)
+        """),
+    },
+    {
+        "name": "compute_trend_indicators",
+        "callable": compute_trend_indicators,
+        "module": "findata.trend_indicators",
+        "tags": [
+            "indicators", "sma", "ema", "rsi", "macd", "adx",
+            "bollinger bands", "technical analysis", "ta", "pandas-ta",
+            "momentum", "trend", "volatility",
+        ],
+        "stub": False,
+        "install_requires": ["pandas-ta", "yfinance"],
+        "summary": (
+            "Snapshot of trend / momentum / volatility indicators on a "
+            "ticker — SMA 20/50/200, EMA 12/26, RSI(14), MACD, ADX, "
+            "Bollinger Bands. Returns the latest values plus pre-computed "
+            "semantic flags (above_50d, golden_cross_recent, "
+            "rsi_state, macd_bullish_cross_5d, adx_state, bb_state) so the "
+            "consuming agent doesn't have to interpret the numbers."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.trend_indicators import compute_trend_indicators
+
+            r = compute_trend_indicators("AAPL", window_days=252)
+            print(r["summary"])
+            print(r["trend"]["above_50d"], r["trend"]["above_200d"])
+            print(r["momentum"]["rsi_14"], r["momentum"]["rsi_state"])
+        """),
+    },
+    {
+        "name": "compute_trend_regime",
+        "callable": compute_trend_regime,
+        "module": "findata.trend_regime",
+        "tags": [
+            "regime", "trend", "mean reversion", "hurst exponent",
+            "linear regression", "drift", "trending", "random walk",
+            "persistence", "technical analysis",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance", "numpy"],
+        "summary": (
+            "Classify a ticker's recent regime — trending vs random-walk "
+            "vs mean-reverting — via the Hurst exponent (R/S ratio) plus "
+            "annualised linear-regression drift on log prices and the "
+            "fit's R². Pure numpy/pandas, no external libs."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.trend_regime import compute_trend_regime
+
+            r = compute_trend_regime("AAPL", window_days=252)
+            print(r["summary"])
+            # → 'AAPL 252d: Hurst 0.61 (trending). linear drift +18.1%/yr. R² 0.42.'
+        """),
+    },
+    {
+        "name": "plot_ohlc_chart",
+        "callable": plot_ohlc_chart,
+        "module": "findata.ohlc_chart",
+        "tags": [
+            "chart", "candlestick", "ohlc", "plot", "visualization",
+            "mplfinance", "support resistance", "indicators", "rsi",
+            "sma", "moving average", "png", "base64",
+        ],
+        "stub": False,
+        "install_requires": ["mplfinance", "matplotlib", "yfinance"],
+        "summary": (
+            "Render an OHLC candlestick chart with optional S/R lines, "
+            "50/200 SMAs, and an RSI subplot. Returns the PNG as base64 + "
+            "a ready-to-paste markdown image snippet "
+            "(![title](data:image/png;base64,...)) for inline embedding "
+            "in chat / debate transcripts."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.ohlc_chart import plot_ohlc_chart
+
+            r = plot_ohlc_chart(
+                "AAPL", lookback_days=252,
+                with_sr=True, with_indicators=True,
+            )
+            # r["markdown_image"] is a paste-ready ![...](data:...) string
+            # r["image_base64"] is the raw base64 PNG
         """),
     },
     {
