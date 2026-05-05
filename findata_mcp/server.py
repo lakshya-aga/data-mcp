@@ -333,6 +333,12 @@ from findata.fred import get_fred_series
 from findata.cboe_volatility import get_cboe_volatility_indices
 from findata.coingecko import get_coingecko_ohlcv
 from findata.binance import get_binance_ohlcv
+from findata.news_yfinance import get_yfinance_news
+from findata.news_gdelt import get_gdelt_news
+from findata.fundamentals import get_equity_fundamentals
+from findata.analyst_consensus import get_analyst_consensus
+from findata.earnings_calendar import get_earnings_calendar
+from findata.returns_stats import compute_returns_stats
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -461,6 +467,166 @@ _REGISTRY: List[Dict[str, Any]] = [
 
             # Last 24 4-hour candles for ETHUSDT
             df = get_binance_ohlcv("ETHUSDT", interval="4h", limit=24)
+        """),
+    },
+    # ─── News / sentiment ──────────────────────────────────────────
+    {
+        "name": "get_yfinance_news",
+        "callable": get_yfinance_news,
+        "module": "findata.news_yfinance",
+        "tags": [
+            "news", "headlines", "yfinance", "yahoo finance", "company news",
+            "press", "media", "articles", "us equity", "ticker news",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance"],
+        "summary": (
+            "Fetch recent news headlines for a US-listed ticker via "
+            "yfinance.Ticker(t).news. Returns a DataFrame indexed by "
+            "publication time with title, publisher, link, and summary."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.news_yfinance import get_yfinance_news
+
+            df = get_yfinance_news("AAPL", max_records=15)
+            # DatetimeIndex desc; columns: title / publisher / link / summary / ticker
+            df[["title", "publisher"]].head()
+        """),
+    },
+    {
+        "name": "get_gdelt_news",
+        "callable": get_gdelt_news,
+        "module": "findata.news_gdelt",
+        "tags": [
+            "news", "gdelt", "global", "sentiment", "tone", "articles",
+            "company news", "industry news", "sector news", "media monitor",
+            "multi-language", "free", "no api key",
+        ],
+        "stub": False,
+        "install_requires": ["requests"],
+        "summary": (
+            "Fetch recent news from GDELT for a company AND (optionally) its "
+            "sector. Returns a dict with two DataFrames ('company' and "
+            "'sector'), each row is one article with GDELT's average tone "
+            "score (-100..+100), domain, language, source country."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.news_gdelt import get_gdelt_news
+
+            # Company-specific + sector context
+            r = get_gdelt_news(
+                company_query="NVIDIA AI chip data center",
+                sector_query="semiconductor manufacturing",
+                days=14,
+                max_records=30,
+            )
+            r["company"][["title", "tone", "domain"]].head()
+            r["sector"]["tone"].describe()  # sector sentiment summary
+
+            # Company only (sector=None)
+            r = get_gdelt_news("Apple iPhone Services revenue", days=7)
+            r["company"][["title", "tone"]].head()
+        """),
+    },
+    # ─── Fundamentals / analyst consensus / events ─────────────────
+    {
+        "name": "get_equity_fundamentals",
+        "callable": get_equity_fundamentals,
+        "module": "findata.fundamentals",
+        "tags": [
+            "fundamentals", "valuation", "pe", "pb", "ev/ebitda", "margins",
+            "roe", "roa", "free cash flow", "balance sheet", "growth",
+            "dividend", "yfinance", "snapshot", "ticker",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance"],
+        "summary": (
+            "Fundamentals snapshot per ticker — valuation multiples (P/E, "
+            "P/B, EV/EBITDA), profitability (ROE, margins), growth, balance "
+            "sheet (cash, debt, FCF), dividend yield, beta, 52-week range. "
+            "One row per ticker via yfinance.Ticker(t).info."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.fundamentals import get_equity_fundamentals
+
+            df = get_equity_fundamentals(["AAPL", "MSFT", "NVDA"])
+            df[["forward_pe", "revenue_growth", "free_cash_flow", "roe"]]
+        """),
+    },
+    {
+        "name": "get_analyst_consensus",
+        "callable": get_analyst_consensus,
+        "module": "findata.analyst_consensus",
+        "tags": [
+            "analyst", "consensus", "target price", "recommendation",
+            "wall street", "ratings", "buy hold sell", "yfinance",
+            "coverage", "upside",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance"],
+        "summary": (
+            "Wall-Street consensus per ticker — mean/high/low target prices, "
+            "current vs target upside %, recommendation key, recommendation "
+            "mean (1=strong buy, 5=sell), number of analysts. Anchors any "
+            "target-price reasoning in a debate or research note."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.analyst_consensus import get_analyst_consensus
+
+            df = get_analyst_consensus(["AAPL", "MSFT"])
+            df[["current_price", "target_mean", "upside_pct",
+                "recommendation_key", "num_analysts"]]
+        """),
+    },
+    {
+        "name": "get_earnings_calendar",
+        "callable": get_earnings_calendar,
+        "module": "findata.earnings_calendar",
+        "tags": [
+            "earnings", "calendar", "eps", "estimate", "actual", "surprise",
+            "results", "report date", "yfinance", "events", "quarterly",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance"],
+        "summary": (
+            "Past + upcoming earnings rows for a ticker. Each row is one "
+            "earnings event with EPS estimate vs. actual (when reported) and "
+            "surprise %. Anchors time-horizon reasoning — does the thesis "
+            "depend on the next print?"
+        ),
+        "example": textwrap.dedent("""\
+            from findata.earnings_calendar import get_earnings_calendar
+
+            df = get_earnings_calendar("AAPL", days_back=730, days_forward=120)
+            df[["eps_estimate", "eps_actual", "surprise_pct", "is_past"]].tail(8)
+        """),
+    },
+    {
+        "name": "compute_returns_stats",
+        "callable": compute_returns_stats,
+        "module": "findata.returns_stats",
+        "tags": [
+            "returns", "vol", "volatility", "beta", "alpha", "max drawdown",
+            "sharpe", "risk", "stats", "annualised", "single ticker",
+            "benchmark",
+        ],
+        "stub": False,
+        "install_requires": ["yfinance", "numpy"],
+        "summary": (
+            "Annualised return / vol / Sharpe / max drawdown / beta vs a "
+            "benchmark for a single ticker over a rolling window. Pure "
+            "pandas/numpy on top of get_equity_prices."
+        ),
+        "example": textwrap.dedent("""\
+            from findata.returns_stats import compute_returns_stats
+
+            stats = compute_returns_stats(
+                "AAPL", window_days=252, benchmark="SPY", risk_free_rate=0.045,
+            )
+            # pandas.Series with annual_return, annual_vol, sharpe,
+            # max_drawdown, beta, alpha_annual, corr_to_benchmark
+            stats[["annual_return", "annual_vol", "sharpe",
+                   "max_drawdown", "beta"]]
         """),
     },
     {
