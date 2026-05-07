@@ -93,10 +93,17 @@ def plot_ohlc_chart(
 
     title = f"{ticker_u} · {lookback_days}d OHLC"
     if df.empty:
+        # yfinance rate-limit + delisted tickers + ticker-not-found all
+        # land here. Hand the agent a paste-ready italic fallback so
+        # it can keep going with text-only analysis without inventing
+        # an apologetic "unexpected error" message.
+        msg = f"No price data returned for {ticker_u} (yfinance empty / rate-limited)."
         return {
             "ticker": ticker_u, "lookback_days": lookback_days, "title": title,
-            "summary": f"No price data returned for {ticker_u}.",
-            "image_base64": "", "markdown_image": "",
+            "summary": msg,
+            "image_base64": "",
+            "markdown_image": f"*Chart unavailable for {ticker_u}: {msg}*",
+            "chart_status": "no_data",
             "params": {"with_sr": with_sr, "with_indicators": with_indicators},
         }
 
@@ -113,10 +120,13 @@ def plot_ohlc_chart(
         ohlc = df.copy()
         ohlc.columns = [str(c).title() for c in ohlc.columns]
     if "Close" not in ohlc.columns:
+        msg = f"OHLC frame missing Close column for {ticker_u}."
         return {
             "ticker": ticker_u, "lookback_days": lookback_days, "title": title,
-            "summary": f"OHLC missing Close column for {ticker_u}.",
-            "image_base64": "", "markdown_image": "",
+            "summary": msg,
+            "image_base64": "",
+            "markdown_image": f"*Chart unavailable for {ticker_u}: {msg}*",
+            "chart_status": "schema_error",
             "params": {"with_sr": with_sr, "with_indicators": with_indicators},
         }
 
@@ -217,19 +227,25 @@ def plot_ohlc_chart(
         plt.close("all")
     except Exception as exc:
         plt.close("all")
+        msg = f"mplfinance render failed: {type(exc).__name__}: {exc}"
         return {
             "ticker": ticker_u, "lookback_days": lookback_days, "title": title,
-            "summary": f"mplfinance failed: {type(exc).__name__}: {exc}",
-            "image_base64": "", "markdown_image": "",
+            "summary": msg,
+            "image_base64": "",
+            "markdown_image": f"*Chart unavailable for {ticker_u}: {msg}*",
+            "chart_status": "render_error",
             "params": {"with_sr": with_sr, "with_indicators": with_indicators},
         }
 
     raw = buf.getvalue()
     if not raw:
+        msg = "Chart rendered empty buffer."
         return {
             "ticker": ticker_u, "lookback_days": lookback_days, "title": title,
-            "summary": "Chart rendered empty buffer.",
-            "image_base64": "", "markdown_image": "",
+            "summary": msg,
+            "image_base64": "",
+            "markdown_image": f"*Chart unavailable for {ticker_u}: {msg}*",
+            "chart_status": "empty_buffer",
             "params": {"with_sr": with_sr, "with_indicators": with_indicators},
         }
 
@@ -244,6 +260,7 @@ def plot_ohlc_chart(
         "summary": " ".join(summary_bits),
         "image_base64": b64,
         "markdown_image": md,
+        "chart_status": "ok",
         "params": {
             "with_sr": with_sr,
             "with_indicators": with_indicators,
