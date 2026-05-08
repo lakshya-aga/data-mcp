@@ -131,9 +131,23 @@ def plot_ohlc_chart(
         }
 
     # Trim to the visible window (after using padded data for SMA warmup).
+    # Tz alignment matters here: pd.Timestamp.utcnow() produces a tz-aware
+    # UTC Timestamp, but yfinance returns a NAIVE datetime64[ns] index for
+    # .NS tickers. Comparing naive↔aware raises in modern pandas
+    # ("Invalid comparison between dtype=datetime64[s] and Timestamp").
+    # Normalise both sides to whichever convention the index uses.
     cutoff = end - pd.Timedelta(days=lookback_days)
-    if ohlc.index.tz is not None:
-        cutoff = cutoff.tz_localize(ohlc.index.tz)
+    idx_tz = getattr(ohlc.index, "tz", None)
+    if idx_tz is None:
+        # Naive index — strip tz from cutoff if it has one.
+        if getattr(cutoff, "tz", None) is not None:
+            cutoff = cutoff.tz_localize(None)
+    else:
+        # Aware index — match its tz on cutoff.
+        if getattr(cutoff, "tz", None) is None:
+            cutoff = cutoff.tz_localize(idx_tz)
+        else:
+            cutoff = cutoff.tz_convert(idx_tz)
     ohlc_visible = ohlc.loc[ohlc.index >= cutoff].copy()
     if ohlc_visible.empty:
         ohlc_visible = ohlc.tail(lookback_days)
