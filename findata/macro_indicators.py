@@ -70,7 +70,9 @@ _FX_COMMODITY = [
     ("DEXINUS",      "USD/INR",             "INR per USD"),
     ("DCOILWTICO",   "WTI crude oil",       "USD/bbl"),
     ("DCOILBRENTEU", "Brent crude oil",     "USD/bbl"),
-    ("GOLDAMGBD228NLBM", "Gold (London)",   "USD/oz"),
+    # Note: London Gold Fix (GOLDAMGBD228NLBM) was discontinued by FRED.
+    # Skipping until we identify a stable replacement series; the macro
+    # analyst can read gold context from news + the dollar index.
 ]
 
 
@@ -162,27 +164,44 @@ def get_macro_snapshot(
     end = date.today()
     start = end - timedelta(days=int(lookback_days))
 
-    # Pull every series in one batch — fredapi handles parallel fetch
-    # internally and we'd rather amortise the 1 RPS limit.
+    # Per-series fetch with individual error capture. Tried bulk fetch
+    # first but findata.fred.get_fred_series re-raises on the first
+    # failed series — one discontinued/renamed series ID would kill the
+    # whole snapshot. FRED occasionally retires series (London Gold Fix
+    # was the latest example), so single-failure resilience is worth the
+    # extra round-trips. fredapi enforces ~1 RPS internally so the wall-
+    # clock cost is similar to the bulk path anyway.
     series_ids = [sid for sid, _, _ in _ALL_SERIES]
-    try:
-        df = get_fred_series(
-            series_ids,
-            start_date=start.strftime("%Y-%m-%d"),
-            end_date=end.strftime("%Y-%m-%d"),
-            api_key=api_key,
-        )
-    except Exception as e:
-        logger.exception("FRED bulk fetch failed")
+    df_columns: dict[str, "pd.Series"] = {}
+    errors_by_series: dict[str, str] = {}
+    for sid in series_ids:
+        try:
+            single = get_fred_series(
+                [sid],
+                start_date=start.strftime("%Y-%m-%d"),
+                end_date=end.strftime("%Y-%m-%d"),
+                api_key=api_key,
+            )
+            if sid in single.columns:
+                df_columns[sid] = single[sid]
+        except Exception as e:
+            errors_by_series[sid] = f"{type(e).__name__}: {e}"
+            logger.warning("FRED series %s failed: %s", sid, e)
+
+    if not df_columns:
+        # Total failure — likely API key not set or upstream down.
+        first_err = next(iter(errors_by_series.values())) if errors_by_series else "no series fetched"
         return {
             "status": "no_data",
             "country": country,
-            "summary": f"FRED fetch failed: {type(e).__name__}: {e}",
-            "indicators": {}, "groups": {}, "errors": series_ids,
+            "summary": f"FRED fetch failed: {first_err}",
+            "indicators": {}, "groups": {}, "errors": list(errors_by_series.keys()),
         }
 
+    df = pd.DataFrame(df_columns)
+
     indicators: dict[str, dict[str, Any]] = {}
-    errors: list[str] = []
+    errors: list[str] = list(errors_by_series.keys())
 
     for sid, label, unit in _ALL_SERIES:
         if sid not in df.columns:
@@ -251,6 +270,11 @@ def get_macro_snapshot(
     groups = {g: [l for l in lbls if l in indicators] for g, lbls in groups.items()}
 
     summary = _summarise_regime(indicators, country)
+
+    # Dedupe errors — a failed-fetch series would be appended twice
+    # (once by the per-series try/except above, once by the empty-data
+    # check inside the indicator loop).
+    errors = list(dict.fromkeys(errors))
 
     out = {
         "status": "ok",
