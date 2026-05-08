@@ -302,6 +302,61 @@ def _check_bloomberg() -> CheckResult:
     return runner.run(fn)
 
 
+def _check_ohlc_chart() -> CheckResult:
+    """Smoke-test plot_ohlc_chart end-to-end for one US + one Indian ticker.
+
+    Catches the kind of regression we hit on 2026-05-08 (naive
+    datetime64[ns] index for .NS tickers vs tz-aware UTC cutoff
+    raised TypeError before any chart could render). The fallback
+    machinery in ohlc_chart hides these by returning chart_status
+    ≠ "ok" instead of raising — useful for users, but means a real
+    code bug only surfaces when an agent actually charts in a debate.
+    Running this check on container start surfaces it immediately.
+
+    The check is intentionally cheap: 60-day lookback, no S/R, no
+    indicators — fastest path that still exercises data-fetch +
+    mplfinance render. yfinance rate-limit responses degrade to a
+    soft warning rather than a FAIL (genuine "no_data" isn't a bug).
+    """
+    runner = _make("ohlc_chart")
+
+    def fn():
+        try:
+            import mplfinance  # noqa: F401
+        except ImportError:
+            raise _SkipCheck("mplfinance not installed")
+        from findata.ohlc_chart import plot_ohlc_chart
+
+        soft_warnings: list[str] = []
+        hard_failures: list[str] = []
+        for ticker in ("AAPL", "RELIANCE.NS"):
+            out = plot_ohlc_chart(
+                ticker, lookback_days=60,
+                with_sr=False, with_indicators=False,
+            )
+            status = out.get("chart_status", "?")
+            if status == "ok":
+                continue
+            if status == "no_data":
+                # yfinance empty / rate-limited — environmental, not a bug.
+                soft_warnings.append(f"{ticker}: no_data (yfinance empty or rate-limited)")
+                continue
+            # render_error / schema_error / wrapper_error → real bug.
+            err = (out.get("summary") or "")[:120]
+            hard_failures.append(f"{ticker}: {status} — {err}")
+
+        if hard_failures:
+            raise RuntimeError("; ".join(hard_failures))
+        # All OK (or only soft warnings). Report soft warnings in detail
+        # so the post-install console line still flags them.
+        return {
+            "tickers": ["AAPL", "RELIANCE.NS"],
+            "soft_warnings": soft_warnings,
+        }
+
+    return runner.run(fn)
+
+
 # Ordered registry. The CLI uses this for `--only` filtering.
 ALL_CHECKS: dict[str, Callable[[], CheckResult]] = {
     "equity_prices": _check_equity_prices,
@@ -314,6 +369,7 @@ ALL_CHECKS: dict[str, Callable[[], CheckResult]] = {
     "sp500_composition": _check_sp500_composition,
     "file_reader": _check_file_reader,
     "bloomberg": _check_bloomberg,
+    "ohlc_chart": _check_ohlc_chart,
 }
 
 
