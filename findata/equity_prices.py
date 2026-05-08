@@ -6,13 +6,85 @@ Wrapper around yfinance for fetching historical OHLCV equity price data.
 
 from __future__ import annotations
 
-from typing import List, Optional
+import logging
+import re
+from typing import Iterable, List, Optional, Union
 
 import pandas as pd
 
 
+# Historical-roster delisting suffix: ``XL-201809`` means the symbol XL was
+# in the index until 2018-09. Some S&P 500 archive CSVs annotate every
+# delisted name this way. yfinance has no idea what to do with it — strip
+# it before sending. Conservative pattern: ONLY a trailing dash followed
+# by exactly 6 digits, so legit hyphenated tickers (BRK-B, RDS-A, etc.)
+# survive unchanged.
+_DELISTING_SUFFIX_RE = re.compile(r"-(\d{6})$")
+
+
+def _normalize_tickers(raw: Union[str, Iterable[str], None]) -> List[str]:
+    """Coerce raw input into a clean, unique list of yfinance ticker symbols.
+
+    Accepts:
+      - ``"AAPL"``                       — single string
+      - ``"AAPL,MSFT,GOOG"``             — comma-separated string
+      - ``"AAPL MSFT GOOG"``             — whitespace-separated string
+      - ``"AAPL, MSFT,  GOOG"``          — mixed delimiters / whitespace
+      - ``["AAPL", "MSFT"]``             — list / tuple / iterable of strings
+      - mixed nested strings (``["AAPL,MSFT", "GOOG"]``) — flattened too
+
+    Strips trailing ``-YYYYMM`` historical-roster delisting suffixes and
+    emits a single INFO log line per call when any were found, so a caller
+    that passed a S&P 500 archive dump sees what was scrubbed without
+    being flooded with one log line per ticker.
+
+    De-dupes while preserving first-seen order. Returns ``[]`` for None /
+    empty / all-blank input — the public function still raises ValueError
+    on empty so the caller knows the request was malformed.
+    """
+    if raw is None:
+        return []
+
+    if isinstance(raw, str):
+        tokens: list[str] = re.split(r"[\s,]+", raw)
+    else:
+        tokens = []
+        for x in raw:
+            if x is None:
+                continue
+            tokens.extend(re.split(r"[\s,]+", str(x)))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    stripped: list[tuple[str, str]] = []
+    for t in tokens:
+        t = t.strip().upper()
+        if not t:
+            continue
+        m = _DELISTING_SUFFIX_RE.search(t)
+        if m:
+            cleaned = t[: m.start()]
+            stripped.append((t, cleaned))
+            t = cleaned
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+
+    if stripped:
+        sample = ", ".join(f"{orig}→{clean}" for orig, clean in stripped[:5])
+        more = f" (+{len(stripped) - 5} more)" if len(stripped) > 5 else ""
+        logging.info(
+            "equity_prices: stripped %d historical-roster delisting "
+            "suffixes (-YYYYMM): %s%s",
+            len(stripped), sample, more,
+        )
+
+    return out
+
+
 def get_equity_prices(
-    tickers: List[str],
+    tickers: Union[List[str], str],
     start_date: str,
     end_date: str,
     fields: Optional[List[str]] = None,
@@ -97,8 +169,17 @@ def get_equity_prices(
             "yfinance is required.  Install: pip install yfinance"
         ) from exc
 
+    # Coerce/clean the input. The original signature was List[str] but
+    # callers (and LLM-generated notebook code) routinely pass CSV strings
+    # or S&P 500 archive dumps with -YYYYMM delisting suffixes. yfinance
+    # treats a CSV string as ONE symbol and returns "No data found, symbol
+    # may be delisted" for the entire blob, which is exactly the failure
+    # mode that masked this bug for so long.
+    tickers = _normalize_tickers(tickers)
     if not tickers:
-        raise ValueError("tickers must be a non-empty list.")
+        raise ValueError(
+            "tickers must be a non-empty list (or comma/space-separated string)."
+        )
 
     _VALID_FREQ = {"1d", "5d", "1wk", "1mo", "3mo"}
     if frequency not in _VALID_FREQ:
