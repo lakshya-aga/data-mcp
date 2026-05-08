@@ -19,6 +19,41 @@ from typing import Optional
 import pandas as pd
 
 
+def _normalise_dtindex(idx: pd.Index) -> pd.DatetimeIndex:
+    """Force a DatetimeIndex to naive ns-resolution.
+
+    yfinance hands back inconsistent dtypes:
+      - datetime64[ns]                     — equity (.NS, US)
+      - datetime64[s]                      — newer BTC-USD / crypto data
+      - datetime64[ns, UTC]                — some crypto with tz
+      - datetime64[s, UTC]                 — both axes wrong at once
+    Comparing any of these against a Timestamp from a different (unit, tz)
+    quadrant raises ``Invalid comparison`` in pandas 2.2+. Force everything
+    to the same canonical frame so call sites don't have to guess.
+    """
+    if not isinstance(idx, pd.DatetimeIndex):
+        idx = pd.DatetimeIndex(idx)
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
+    if hasattr(idx, "as_unit"):
+        idx = idx.as_unit("ns")
+    elif idx.dtype != "datetime64[ns]":
+        # Older pandas without as_unit — coerce via numpy.
+        idx = pd.DatetimeIndex(idx.values.astype("datetime64[ns]"))
+    return idx
+
+
+def _normalise_timestamp(ts: pd.Timestamp) -> pd.Timestamp:
+    """Force a Timestamp to naive ns-resolution. Mirror of _normalise_dtindex."""
+    if not isinstance(ts, pd.Timestamp):
+        ts = pd.Timestamp(ts)
+    if ts.tz is not None:
+        ts = ts.tz_localize(None)
+    if hasattr(ts, "as_unit"):
+        ts = ts.as_unit("ns")
+    return ts
+
+
 def plot_ohlc_chart(
     ticker: str,
     lookback_days: int = 252,
@@ -131,23 +166,25 @@ def plot_ohlc_chart(
         }
 
     # Trim to the visible window (after using padded data for SMA warmup).
-    # Tz alignment matters here: pd.Timestamp.utcnow() produces a tz-aware
-    # UTC Timestamp, but yfinance returns a NAIVE datetime64[ns] index for
-    # .NS tickers. Comparing naive↔aware raises in modern pandas
-    # ("Invalid comparison between dtype=datetime64[s] and Timestamp").
-    # Normalise both sides to whichever convention the index uses.
+    # Two axes of mismatch can break the comparison `index >= cutoff` in
+    # modern pandas:
+    #
+    #   1. tz-awareness: pd.Timestamp.utcnow() is tz-aware (UTC) but
+    #      yfinance returns naive indexes for .NS tickers and aware
+    #      indexes for some crypto tickers (BTC-USD).
+    #   2. resolution:   yfinance has migrated to datetime64[s] for some
+    #      tickers (BTC-USD as of recent versions), but Timestamp objects
+    #      default to datetime64[ns]. pandas 2.2+ raises
+    #      "Invalid comparison between dtype=datetime64[s] and Timestamp"
+    #      when the units differ.
+    #
+    # Belt-and-braces fix: force both the index AND the cutoff to a
+    # canonical "naive nanosecond" reference frame before comparing. This
+    # is idempotent on already-correct frames and survives whatever
+    # yfinance throws at us.
     cutoff = end - pd.Timedelta(days=lookback_days)
-    idx_tz = getattr(ohlc.index, "tz", None)
-    if idx_tz is None:
-        # Naive index — strip tz from cutoff if it has one.
-        if getattr(cutoff, "tz", None) is not None:
-            cutoff = cutoff.tz_localize(None)
-    else:
-        # Aware index — match its tz on cutoff.
-        if getattr(cutoff, "tz", None) is None:
-            cutoff = cutoff.tz_localize(idx_tz)
-        else:
-            cutoff = cutoff.tz_convert(idx_tz)
+    ohlc.index = _normalise_dtindex(ohlc.index)
+    cutoff = _normalise_timestamp(cutoff)
     ohlc_visible = ohlc.loc[ohlc.index >= cutoff].copy()
     if ohlc_visible.empty:
         ohlc_visible = ohlc.tail(lookback_days)
