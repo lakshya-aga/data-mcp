@@ -257,13 +257,16 @@ def plot_ohlc_chart(
         summary_bits.append(f"{len(sr_levels)} S/R levels.")
 
     # ── Render to PNG buffer ──
+    # Newer mplfinance (>=0.12.10b1 or so) rejects ``addplot=None``
+    # outright — its validator wants dict / list / omitted-entirely.
+    # Build the kwargs dict and OMIT addplot when empty rather than
+    # passing None. Same for hlines and the RSI-panel split.
     buf = io.BytesIO()
     try:
         mpf_kwargs = dict(
             type="candle",
             style=style,
             volume=False,  # subtract from real estate; users can opt in later
-            addplot=addplots if addplots else None,
             figsize=(width_px / 100, height_px / 100),
             tight_layout=True,
             savefig=dict(fname=buf, dpi=100, bbox_inches="tight"),
@@ -271,6 +274,8 @@ def plot_ohlc_chart(
             ylabel="Price",
             datetime_format="%Y-%m-%d",
         )
+        if addplots:
+            mpf_kwargs["addplot"] = addplots
         mpf_kwargs.update(rsi_panel_kwargs)
         if hlines_arg:
             mpf_kwargs["hlines"] = hlines_arg
