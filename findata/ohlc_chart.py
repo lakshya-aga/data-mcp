@@ -168,17 +168,28 @@ def plot_ohlc_chart(
 
     if with_indicators:
         try:
-            sma_50 = ohlc["Close"].rolling(50).mean()
-            sma_200 = ohlc["Close"].rolling(200).mean()
-            addplots.append(mpf.make_addplot(
-                sma_50.reindex(ohlc_visible.index),
-                color="#3b82f6", width=1.0, alpha=0.85,
-            ))
-            addplots.append(mpf.make_addplot(
-                sma_200.reindex(ohlc_visible.index),
-                color="#a855f7", width=1.0, alpha=0.85,
-            ))
-            summary_bits.append("50/200d SMA overlay.")
+            # Compute on the full (padded) frame so SMAs warm up on the
+            # left edge of the visible window. Each rolling window needs
+            # at least N non-NaN observations to emit a value; if the
+            # padded history isn't long enough, the reindexed series is
+            # 100% NaN and mplfinance crashes with
+            # "zero-size array to reduction operation maximum". Skip
+            # individual SMAs that have no usable values.
+            sma_50  = ohlc["Close"].rolling(50).mean().reindex(ohlc_visible.index)
+            sma_200 = ohlc["Close"].rolling(200).mean().reindex(ohlc_visible.index)
+            included = []
+            if sma_50.notna().any():
+                addplots.append(mpf.make_addplot(
+                    sma_50, color="#3b82f6", width=1.0, alpha=0.85,
+                ))
+                included.append("50d")
+            if sma_200.notna().any():
+                addplots.append(mpf.make_addplot(
+                    sma_200, color="#a855f7", width=1.0, alpha=0.85,
+                ))
+                included.append("200d")
+            if included:
+                summary_bits.append("/".join(included) + " SMA overlay.")
         except Exception:
             pass
 
