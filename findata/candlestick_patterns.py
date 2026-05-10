@@ -120,10 +120,15 @@ def detect_candlestick_patterns(
             "summary": f"OHLC data for {ticker} missing required columns.",
         }
 
-    # Trim to the requested window (after using extra history for warm-up).
+    # Trim to the requested window. yfinance hands back DatetimeIndexes
+    # in ANY of four (tz × unit) quadrants; comparing index >= cutoff
+    # without normalising both sides raises "Invalid comparison between
+    # dtype=datetime64[s] and Timestamp" in pandas 2.2+. Force both to
+    # naive ns via the shared helper.
+    from ._datetime_utils import normalise_dtindex, normalise_timestamp
     cutoff = end - pd.Timedelta(days=lookback_days)
-    if ohlc.index.tz is not None:
-        cutoff = cutoff.tz_localize(ohlc.index.tz)
+    ohlc.index = normalise_dtindex(ohlc.index)
+    cutoff = normalise_timestamp(cutoff)
 
     # pandas-ta's cdl_pattern adds many 'CDL_xxx' columns inline.
     try:

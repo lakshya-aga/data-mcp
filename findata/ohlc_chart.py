@@ -19,39 +19,12 @@ from typing import Optional
 import pandas as pd
 
 
-def _normalise_dtindex(idx: pd.Index) -> pd.DatetimeIndex:
-    """Force a DatetimeIndex to naive ns-resolution.
-
-    yfinance hands back inconsistent dtypes:
-      - datetime64[ns]                     — equity (.NS, US)
-      - datetime64[s]                      — newer BTC-USD / crypto data
-      - datetime64[ns, UTC]                — some crypto with tz
-      - datetime64[s, UTC]                 — both axes wrong at once
-    Comparing any of these against a Timestamp from a different (unit, tz)
-    quadrant raises ``Invalid comparison`` in pandas 2.2+. Force everything
-    to the same canonical frame so call sites don't have to guess.
-    """
-    if not isinstance(idx, pd.DatetimeIndex):
-        idx = pd.DatetimeIndex(idx)
-    if idx.tz is not None:
-        idx = idx.tz_localize(None)
-    if hasattr(idx, "as_unit"):
-        idx = idx.as_unit("ns")
-    elif idx.dtype != "datetime64[ns]":
-        # Older pandas without as_unit — coerce via numpy.
-        idx = pd.DatetimeIndex(idx.values.astype("datetime64[ns]"))
-    return idx
-
-
-def _normalise_timestamp(ts: pd.Timestamp) -> pd.Timestamp:
-    """Force a Timestamp to naive ns-resolution. Mirror of _normalise_dtindex."""
-    if not isinstance(ts, pd.Timestamp):
-        ts = pd.Timestamp(ts)
-    if ts.tz is not None:
-        ts = ts.tz_localize(None)
-    if hasattr(ts, "as_unit"):
-        ts = ts.as_unit("ns")
-    return ts
+# Datetime-normalisation helpers moved to findata._datetime_utils so
+# every findata module that does temporal index slicing uses the
+# same canonical (naive ns) reference frame. Avoids replicating the
+# tz/unit-mismatch bug across modules.
+from ._datetime_utils import normalise_dtindex as _normalise_dtindex
+from ._datetime_utils import normalise_timestamp as _normalise_timestamp
 
 
 def plot_ohlc_chart(
