@@ -1,0 +1,25 @@
+# Core runtime
+mcp>=1.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# Data sources
+yfinance>=0.2.38
+pyarrow>=14.0
+
+# SSE/HTTP transport (MCP server)
+uvicorn>=0.27.0
+starlette>=0.36.0
+
+# Technical analysis
+pandas-ta>=0.3.14b0
+mplfinance>=0.12.10b0
+scipy>=1.11
+scikit-learn>=1.3
+
+# FRED data
+fredapi>=0.5
+
+# Development
+pytest>=7.0
+pytest-asyncio>=0.21
